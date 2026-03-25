@@ -15,20 +15,22 @@
 ║           Bootstrap a repo in seconds           ║
 ╚══════════════════════════════════════════════════╝
 
-  Project name    › my-app
-  Parent dir      › ~/work
-  git user.name   › Ada Lovelace
-  git user.email  › ada@work.io
-  Tech stack      › TypeScript
-  Visibility      › private
-  Description     › Does something cool
+  Project name      › my-app
+  Parent directory  › ~/work
+  Identity          › work  (saved profile)
+  Tech stack        › TypeScript
+  License           › MIT
+  Default branch    › main
+  Add .env.example? › Yes
+  Visibility        › private
+  Description       › Does something cool
 
   ◉ Create project? Yes
 
   ⠸ Creating GitHub repo...
   ✓ my-app is ready  →  https://github.com/you/my-app
 
-  cd ~/work/my-app
+  Open in editor › Cursor
 ```
 
 One prompt flow. No flags, no config files, no RTFM.
@@ -40,9 +42,9 @@ One prompt flow. No flags, no config files, no RTFM.
 **Prerequisites**
 
 ```sh
-brew install gum   # the TUI engine
-brew install gh    # GitHub CLI — make sure you're logged in
-gh auth login      # if not already
+brew install gum   # TUI engine
+brew install gh    # GitHub CLI
+gh auth login      # if not already authenticated
 ```
 
 **Install `new-project`**
@@ -51,7 +53,7 @@ gh auth login      # if not already
 curl -fsSL https://raw.githubusercontent.com/unlocalhosted/breed-me-an-app/main/install.sh | bash
 ```
 
-Drops the `new-project` command into `/usr/local/bin`. That's it.
+Drops the `new-project` command into `/usr/local/bin`.
 
 ---
 
@@ -61,31 +63,45 @@ Drops the `new-project` command into `/usr/local/bin`. That's it.
 new-project
 ```
 
-It asks you seven questions, then handles everything else.
-
 ---
 
-## Stacks
+## Features
 
-Each stack comes with sensible defaults and gets out of your way.
+### Identity profiles
+Save your name/email combos as named profiles (e.g. `work`, `personal`). Next time you run `new-project`, pick from the list instead of typing. Stored in `~/.config/new-project/profiles`.
+
+### Stack boilerplate
 
 | Stack | What you get |
 |---|---|
 | **Node.js** | `package.json`, `index.js`, `.gitignore` |
 | **TypeScript** | `package.json`, `tsconfig.json`, `src/index.ts`, `.gitignore` |
 | **Python** | `main.py`, `requirements.txt`, `.gitignore` |
-| **Go** | `main.go`, `go.mod` (with your GitHub username), `.gitignore` |
+| **Go** | `main.go`, `go.mod` (prefilled with your GitHub username), `.gitignore` |
 | **Rust** | `.gitignore` + prompt to run `cargo init` |
 | **React / Next.js** | `.gitignore` + prompt to run `create-next-app` |
 | **Bare** | `README.md`, `.gitignore` — nothing else |
+| **From template →** | Clone any GitHub template repo as the base |
 
-Every stack also gets a `README.md` with your project name and description pre-filled.
+Every stack also gets a `README.md` prefilled with your project name and description.
+
+### License picker
+Choose MIT, Apache 2.0, GPL-3.0, or None. Generates a proper `LICENSE` file with your name and year.
+
+### `.env.example`
+Opt-in per project. Creates an empty `.env.example` as a starting point for environment variables.
+
+### Custom branch name
+Defaults to `main`, override to whatever your org mandates.
+
+### Open in editor
+After setup, optionally launch the project directly in VS Code, Cursor, Zed, or Neovim.
 
 ---
 
 ## Why per-repo git identity?
 
-Because office projects and personal projects shouldn't share the same name and email. `new-project` always asks — no guessing, no accidental commits from the wrong account.
+Because office projects and personal projects shouldn't share the same name and email. `new-project` always asks — no guessing, no accidental commits from the wrong account. Save them as profiles so you only type once.
 
 ---
 
@@ -93,6 +109,7 @@ Because office projects and personal projects shouldn't share the same name and 
 
 ```sh
 rm /usr/local/bin/new-project
+rm -rf ~/.config/new-project   # optional: remove saved profiles
 ```
 
 ---
@@ -101,7 +118,7 @@ rm /usr/local/bin/new-project
 
 - [gum](https://github.com/charmbracelet/gum) — TUI components for shell scripts
 - [gh](https://cli.github.com/) — GitHub CLI
-- bash — nothing exotic
+- bash
 
 ---
 
