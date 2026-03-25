@@ -25,10 +25,9 @@ PROJECT_NAME=$(gum input \
   --placeholder "my-app")
 [[ -z "$PROJECT_NAME" ]] && gum style --foreground 196 "  Aborted: project name is required." && exit 1
 
-PARENT_DIR=$(gum input \
-  --prompt "  Parent directory › " \
-  --placeholder "$HOME/projects" \
-  --value "$HOME/")
+PARENT_DIR=$(gum file --directory --file=false \
+  --header "  Parent directory" \
+  "$HOME")
 PARENT_DIR="${PARENT_DIR%/}"
 PROJECT_PATH="$PARENT_DIR/$PROJECT_NAME"
 
