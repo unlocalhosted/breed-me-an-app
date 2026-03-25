@@ -293,7 +293,7 @@ if [[ -f "$PROFILES_FILE" ]] && [[ -s "$PROFILES_FILE" ]]; then
     show_header "Identity  ·  3 of 4"
     GIT_EMAIL=$(gum input --prompt "  git user.email › " --placeholder "you@example.com")
     show_header "Identity  ·  3 of 4"
-    PROFILE_LABEL=$(gum input --prompt "  Save as › " --placeholder "work / personal")
+    PROFILE_LABEL=$(gum input --prompt "  Save as (optional) › " --placeholder "work / personal")
     PROFILE_LABEL="${PROFILE_LABEL//|/}"
     [[ -n "$PROFILE_LABEL" ]] && save_profile "$PROFILE_LABEL" "$GIT_NAME" "$GIT_EMAIL"
   else
@@ -304,7 +304,7 @@ else
   show_header "Identity  ·  3 of 4"
   GIT_EMAIL=$(gum input --prompt "  git user.email › " --placeholder "you@example.com")
   show_header "Identity  ·  3 of 4"
-  PROFILE_LABEL=$(gum input --prompt "  Save as profile (optional) › " --placeholder "work / personal")
+  PROFILE_LABEL=$(gum input --prompt "  Save as (optional) › " --placeholder "work / personal")
   PROFILE_LABEL="${PROFILE_LABEL//|/}"
   [[ -n "$PROFILE_LABEL" ]] && save_profile "$PROFILE_LABEL" "$GIT_NAME" "$GIT_EMAIL"
 fi
@@ -327,8 +327,8 @@ if [[ "$STACK" != "From template →" ]]; then
 fi
 
 # ─── branch name ──────────────────────────────────────────────────────────────
-show_header "Details  ·  4 of 4"
 while true; do
+  show_header "Details  ·  4 of 4"
   BRANCH=$(gum input --prompt "  Default branch › " --value "main")
   BRANCH="${BRANCH:-main}"
   if [[ "$BRANCH" =~ \.\. ]] \
@@ -348,7 +348,7 @@ if [[ "$STACK" != "From template →" ]]; then
   gum style --foreground 240 "  Creates .env.example as a template for environment variables."
   echo ""
   gum confirm "  Add .env.example?" && ADD_ENV=true || true
-  add_progress ".env.example" "$(if $ADD_ENV; then printf yes; else printf no; fi)"
+  add_progress "env.example" "$(if $ADD_ENV; then printf yes; else printf no; fi)"
 fi
 
 # ─── github actions ci ────────────────────────────────────────────────────────
@@ -358,7 +358,7 @@ if [[ "$STACK" != "From template →" ]] && [[ "$STACK" != "Bare" ]]; then
   gum style --foreground 240 "  Writes .github/workflows/ci.yml — build + test on push and PR."
   echo ""
   gum confirm "  Add GitHub Actions CI?" && ADD_CI=true || true
-  add_progress "CI" "$(if $ADD_CI; then printf yes; else printf no; fi)"
+  add_progress "ci" "$(if $ADD_CI; then printf yes; else printf no; fi)"
 fi
 
 # ─── parent directory ─────────────────────────────────────────────────────────
@@ -393,7 +393,7 @@ if [[ "$FLAG_DRY_RUN" == true ]]; then
   exit 0
 fi
 
-gum confirm "  Breed it?" || { printf "  Aborted.\n"; exit 0; }
+gum confirm "  Breed it?" || { echo ""; gum style --foreground 240 "  Aborted."; echo ""; exit 0; }
 echo ""
 
 # ─── guard ────────────────────────────────────────────────────────────────────
@@ -857,7 +857,7 @@ gum style \
   "✓ $PROJECT_NAME is ready${REPO_URL:+  →  $REPO_URL}"
 echo ""
 
-CD_CMD="cd $PROJECT_PATH"
+CD_CMD="cd \"$PROJECT_PATH\""
 if command -v pbcopy &>/dev/null; then
   printf "%s" "$CD_CMD" | pbcopy
   gum style --foreground 255 "  \$ $CD_CMD"
