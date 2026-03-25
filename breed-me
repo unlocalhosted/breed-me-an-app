@@ -200,10 +200,10 @@ add_progress "project" "$PROJECT_NAME"
 # ─── stack ────────────────────────────────────────────────────────────────────
 show_header "Project  ·  1 of 4"
 
-STACK_OPTIONS=("Node.js" "TypeScript" "Python" "Go" "Rust" "React / Next.js" "Bare")
+STACK_OPTIONS=("Node.js" "TypeScript" "Python" "Go" "Rust" "React (Vite)" "Next.js" "Bare")
 [[ "$FLAG_LOCAL" == false ]] && STACK_OPTIONS+=("From template →")
 
-STACK=$(printf "%s\n" "${STACK_OPTIONS[@]}" | gum choose --header "  Stack" --height 10)
+STACK=$(printf "%s\n" "${STACK_OPTIONS[@]}" | gum choose --header "  Stack" --height 11)
 add_progress "stack" "$STACK"
 
 # ─── template repo ────────────────────────────────────────────────────────────
@@ -213,6 +213,12 @@ if [[ "$STACK" == "From template →" ]]; then
   TEMPLATE_REPO=$(gum input --prompt "  GitHub template › " --placeholder "owner/repo")
   [[ -z "$TEMPLATE_REPO" ]] && die "template repo is required — try: owner/repo"
   add_progress "template" "$TEMPLATE_REPO"
+fi
+
+# ─── pnpm check for package-manager-aware stacks ─────────────────────────────
+if [[ "$STACK" == "TypeScript" || "$STACK" == "React (Vite)" || "$STACK" == "Next.js" ]]; then
+  command -v pnpm &>/dev/null || \
+    die "pnpm is required for $STACK — install from pnpm.io or: npm install -g pnpm"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -520,15 +526,21 @@ on:
     branches: [$BRANCH]
   pull_request:
 jobs:
-  test:
+  ci:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: latest
       - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - run: npm install
-      - run: npm run build
-      - run: npm test --if-present
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm test:run
+      - run: pnpm build
 EOF
       ;;
     "Python")
@@ -584,7 +596,7 @@ jobs:
       - run: cargo test
 EOF
       ;;
-    "React / Next.js")
+    "React (Vite)"|"Next.js")
       cat > .github/workflows/ci.yml <<EOF
 name: CI
 on:
@@ -592,14 +604,21 @@ on:
     branches: [$BRANCH]
   pull_request:
 jobs:
-  build:
+  ci:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: latest
       - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - run: npm install
-      - run: npm run build
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm test:run
+      - run: pnpm build
 EOF
       ;;
   esac
@@ -676,16 +695,22 @@ EOF
   "name": "$PROJECT_NAME",
   "version": "0.1.0",
   "description": "$JSON_DESCRIPTION",
-  "main": "dist/index.js",
+  "type": "module",
+  "packageManager": "pnpm@latest",
   "scripts": {
-    "build": "tsc",
-    "dev": "ts-node src/index.ts",
-    "start": "node dist/index.js"
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "build": "tsc --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "lint": "oxlint src",
+    "lint:fix": "oxlint src --fix"
   },
   "devDependencies": {
+    "@types/bun": "latest",
+    "oxlint": "latest",
     "typescript": "^5.0.0",
-    "ts-node": "^10.0.0",
-    "@types/node": "^20.0.0"
+    "vitest": "^2.0.0"
   },
   "license": "$LICENSE_SPDX"
 }
@@ -694,28 +719,65 @@ EOF
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "commonjs",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
     "lib": ["ES2022"],
-    "outDir": "dist",
-    "rootDir": "src",
     "strict": true,
-    "esModuleInterop": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "types": ["bun-types"]
   },
   "include": ["src"],
-  "exclude": ["node_modules", "dist"]
+  "exclude": ["node_modules"]
+}
+EOF
+      cat > vitest.config.ts <<'EOF'
+import { defineConfig } from 'vitest/config'
+
+export default defineConfig({
+  test: {
+    environment: 'node',
+    include: ['src/**/*.{test,spec}.{ts,js}'],
+  },
+})
+EOF
+      cat > .oxlintrc.json <<'EOF'
+{
+  "plugins": ["import"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn"
+  },
+  "env": {
+    "node": true
+  }
 }
 EOF
       mkdir -p src
       cat > src/index.ts <<'EOF'
-function main(): void {
-  console.log("Hello, world!");
+export function main(): void {
+  console.log('Hello, world!')
 }
 
-main();
+main()
+EOF
+      cat > src/index.test.ts <<'EOF'
+import { describe, expect, it } from 'vitest'
+import { main } from './index.js'
+
+describe('main', () => {
+  it('runs without error', () => {
+    expect(() => main()).not.toThrow()
+  })
+})
 EOF
       write_readme; write_env_example; write_license; write_ci
+      gum spin --spinner dot --title "  Installing dependencies..." -- \
+        pnpm install --silent 2>/dev/null || \
+        gum style --foreground 214 "  pnpm install failed — run manually: pnpm install"
       ;;
 
     "Python")
@@ -783,19 +845,272 @@ EOF
       fi
       ;;
 
-    "React / Next.js")
+    "React (Vite)")
       cat > .gitignore <<'EOF'
 node_modules/
-.next/
-out/
+dist/
 .env
 .env.local
-.env*.local
 *.log
 .DS_Store
 EOF
+      cat > package.json <<EOF
+{
+  "name": "$PROJECT_NAME",
+  "version": "0.1.0",
+  "private": true,
+  "description": "$JSON_DESCRIPTION",
+  "type": "module",
+  "packageManager": "pnpm@latest",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "lint": "oxlint src",
+    "lint:fix": "oxlint src --fix"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.0.0",
+    "@testing-library/react": "^16.0.0",
+    "@testing-library/user-event": "^14.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.0.0",
+    "jsdom": "^25.0.0",
+    "oxlint": "latest",
+    "typescript": "^5.0.0",
+    "vite": "^6.0.0",
+    "vitest": "^2.0.0"
+  },
+  "license": "$LICENSE_SPDX"
+}
+EOF
+      cat > tsconfig.json <<'EOF'
+{
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "./tsconfig.node.json" }
+  ]
+}
+EOF
+      cat > tsconfig.app.json <<'EOF'
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src"]
+}
+EOF
+      cat > tsconfig.node.json <<'EOF'
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "strict": true
+  },
+  "include": ["vite.config.ts"]
+}
+EOF
+      cat > vite.config.ts <<'EOF'
+/// <reference types="vitest/config" />
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    environment: 'jsdom',
+    setupFiles: './src/test/setup.ts',
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+  },
+})
+EOF
+      cat > .oxlintrc.json <<'EOF'
+{
+  "plugins": ["react", "jsx-a11y"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn"
+  },
+  "env": {
+    "browser": true
+  }
+}
+EOF
+      cat > index.html <<EOF
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>$PROJECT_NAME</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+EOF
+      mkdir -p src/test
+      cat > src/main.tsx <<'EOF'
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import App from './App.tsx'
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
+EOF
+      cat > src/App.tsx <<EOF
+function App() {
+  return (
+    <main>
+      <h1>$PROJECT_NAME</h1>
+    </main>
+  )
+}
+
+export default App
+EOF
+      cat > src/App.test.tsx <<'EOF'
+import { render, screen } from '@testing-library/react'
+import { describe, expect, it } from 'vitest'
+import App from './App'
+
+describe('App', () => {
+  it('renders the heading', () => {
+    render(<App />)
+    expect(screen.getByRole('heading')).toBeInTheDocument()
+  })
+})
+EOF
+      cat > src/test/setup.ts <<'EOF'
+import '@testing-library/jest-dom'
+EOF
       write_readme; write_env_example; write_license; write_ci
-      gum style --foreground 214 "  Note: run 'npx create-next-app@latest .' to scaffold"
+      gum spin --spinner dot --title "  Installing dependencies..." -- \
+        pnpm install --silent 2>/dev/null || \
+        gum style --foreground 214 "  pnpm install failed — run manually: pnpm install"
+      gum spin --spinner dot --title "  Initializing react-grab..." -- \
+        pnpm dlx grab@latest init 2>/dev/null || \
+        gum style --foreground 214 "  react-grab: run manually: pnpm dlx grab@latest init"
+      ;;
+
+    "Next.js")
+      # create-next-app writes its own .gitignore and README — don't write ours first
+      write_env_example; write_license; write_ci
+      gum spin --spinner dot --title "  Scaffolding Next.js (this takes a moment)..." -- \
+        pnpm dlx create-next-app@latest . \
+          --yes --ts --tailwind --no-linter \
+          --app --src-dir --use-pnpm --skip-install \
+          2>/dev/null || \
+        die "create-next-app failed — check your connection or run: pnpm dlx create-next-app@latest ."
+      # Add vitest + testing-library + oxlint on top of the scaffold
+      cat > vitest.config.ts <<'EOF'
+/// <reference types="vitest/config" />
+import { defineConfig } from 'vitest/config'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    environment: 'jsdom',
+    setupFiles: './src/test/setup.ts',
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+  },
+})
+EOF
+      cat > .oxlintrc.json <<'EOF'
+{
+  "plugins": ["react", "jsx-a11y"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn"
+  },
+  "env": {
+    "browser": true,
+    "node": true
+  }
+}
+EOF
+      mkdir -p src/test src/__tests__
+      cat > src/test/setup.ts <<'EOF'
+import '@testing-library/jest-dom'
+EOF
+      cat > src/__tests__/page.test.tsx <<'EOF'
+import { render } from '@testing-library/react'
+import { describe, expect, it } from 'vitest'
+import Home from '../app/page'
+
+describe('Home page', () => {
+  it('renders without crashing', () => {
+    const { container } = render(<Home />)
+    expect(container).toBeTruthy()
+  })
+})
+EOF
+      # Merge test/lint scripts and devDependencies into the package.json that
+      # create-next-app wrote, using node so we don't need jq installed
+      node <<'JSEOF'
+const fs = require('fs')
+const pkg = JSON.parse(fs.readFileSync('package.json', 'utf-8'))
+pkg.scripts = {
+  ...pkg.scripts,
+  test: 'vitest',
+  'test:run': 'vitest run',
+  lint: 'oxlint src',
+  'lint:fix': 'oxlint src --fix',
+}
+pkg.devDependencies = {
+  ...pkg.devDependencies,
+  '@testing-library/jest-dom': '^6.0.0',
+  '@testing-library/react': '^16.0.0',
+  '@testing-library/user-event': '^14.0.0',
+  '@vitejs/plugin-react': '^4.0.0',
+  'jsdom': '^25.0.0',
+  'oxlint': 'latest',
+  'vitest': '^2.0.0',
+}
+fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n')
+JSEOF
+      gum spin --spinner dot --title "  Installing dependencies..." -- \
+        pnpm install --silent 2>/dev/null || \
+        gum style --foreground 214 "  pnpm install failed — run manually: pnpm install"
+      gum spin --spinner dot --title "  Initializing react-grab..." -- \
+        pnpm dlx grab@latest init 2>/dev/null || \
+        gum style --foreground 214 "  react-grab: run manually: pnpm dlx grab@latest init"
       ;;
 
     "Bare")

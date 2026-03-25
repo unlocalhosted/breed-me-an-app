@@ -84,15 +84,18 @@ breed-me --help     # usage
 | Stack | What gets created |
 |---|---|
 | **Node.js** | `package.json`, `index.js`, `.gitignore` |
-| **TypeScript** | `package.json`, `tsconfig.json`, `src/index.ts`, `.gitignore` |
+| **TypeScript** | pnpm + bun runtime · `vitest` · `oxlint` · `src/index.ts` + `src/index.test.ts` |
 | **Python** | `main.py`, `requirements.txt`, `.gitignore` |
 | **Go** | `main.go`, `go.mod` (module path set to your GitHub handle), `.gitignore` |
 | **Rust** | Full `cargo init` if cargo is installed, `.gitignore` |
-| **React / Next.js** | `.gitignore` + scaffold command to run after |
+| **React (Vite)** | pnpm + Vite + React 19 · `vitest` + `@testing-library/react` · `oxlint` · `react-grab` |
+| **Next.js** | pnpm + `create-next-app` (App Router + Tailwind) · `vitest` · `oxlint` · `react-grab` |
 | **Bare** | `README.md` + `.gitignore` — nothing else |
 | **From template →** | Clone any GitHub template repo as the starting point |
 
 Every stack includes a `README.md` and an optional `LICENSE` file prefilled with your name and year.
+
+> **TypeScript, React, and Next.js** require `pnpm` (`npm install -g pnpm`) and a modern `bun` install for the TypeScript backend runtime.
 
 ---
 
