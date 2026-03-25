@@ -2,7 +2,7 @@
 
 > Stop copy-pasting your setup ritual. One command, you're coding.
 
-`new-project` is a terminal TUI that bootstraps a new project from zero to GitHub-ready in seconds — picks your stack, scaffolds boilerplate, sets up git identity per-repo, optionally creates a GitHub repo, and pushes the first commit. All without leaving your terminal.
+`breed-me` is a terminal TUI that bootstraps a new project from zero to GitHub-ready in seconds — picks your stack, scaffolds boilerplate, sets up git identity per-repo, optionally creates a GitHub repo, and pushes the first commit. All without leaving your terminal.
 
 ---
 
@@ -16,7 +16,7 @@ brew install gh    # GitHub CLI (skip if using --local)
 gh auth login      # if not already authenticated
 ```
 
-**Install `new-project`**
+**Install `breed-me`**
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/unlocalhosted/breed-me-an-app/main/install.sh | bash
@@ -33,12 +33,12 @@ export PATH="$HOME/.local/bin:$PATH"  # add to ~/.zshrc or ~/.bashrc
 ## Usage
 
 ```sh
-new-project              # interactive project setup
-new-project list         # show previously created projects
-new-project --local      # skip GitHub — local git repo only
-new-project --dry-run    # preview what would be created, no side effects
-new-project --update     # update to the latest version
-new-project --help       # show usage
+breed-me              # interactive project setup
+breed-me list         # show previously created projects
+breed-me --local      # skip GitHub — local git repo only
+breed-me --dry-run    # preview what would be created, no side effects
+breed-me --update     # update to the latest version
+breed-me --help       # show usage
 ```
 
 ---
@@ -48,7 +48,7 @@ new-project --help       # show usage
 ```
 ╔════════════════════════════════════════════════════╗
 ║                                                    ║
-║                   ◆ new-project                    ║
+║                   ◆ breed-me                    ║
 ║            Bootstrap a repo in seconds             ║
 ║                                                    ║
 ╚════════════════════════════════════════════════════╝
@@ -93,7 +93,7 @@ new-project --help       # show usage
 ## Features
 
 ### Identity profiles
-Save name/email combos as named profiles (e.g. `work`, `personal`). On subsequent runs, pick from the saved list. Stored in `~/.config/new-project/profiles`.
+Save name/email combos as named profiles (e.g. `work`, `personal`). On subsequent runs, pick from the saved list. Stored in `~/.config/breed-me/profiles`.
 
 ### Stack boilerplate
 
@@ -123,7 +123,7 @@ If your GitHub account belongs to organizations, you're offered a choice: push t
 Pass `--local` to skip all GitHub steps — no `gh` required, no repo created, just a clean local git repo.
 
 ### Project history
-`new-project list` shows every project you've created: name, local path, GitHub URL, and date.
+`breed-me list` shows every project you've created: name, local path, GitHub URL, and date.
 
 ### Smart defaults
 - **Directory picker** remembers your last-used parent directory
@@ -136,7 +136,7 @@ Pass `--local` to skip all GitHub steps — no `gh` required, no repo created, j
 
 ## Config files
 
-All config lives in `~/.config/new-project/`:
+All config lives in `~/.config/breed-me/`:
 
 | File | Contents |
 |---|---|
@@ -149,8 +149,8 @@ All config lives in `~/.config/new-project/`:
 ## Uninstall
 
 ```sh
-rm "$(command -v new-project)"
-rm -rf ~/.config/new-project   # optional: remove saved profiles and history
+rm "$(command -v breed-me)"
+rm -rf ~/.config/breed-me   # optional: remove saved profiles and history
 ```
 
 ---

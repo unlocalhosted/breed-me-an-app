@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_NAME="new-project"
+SCRIPT_NAME="breed-me"
 REPO="unlocalhosted/breed-me-an-app"
 BRANCH="main"
 
@@ -26,7 +26,7 @@ echo "Installing $SCRIPT_NAME to $INSTALL_DIR..."
 TMP=$(mktemp)
 trap 'rm -f "$TMP"' EXIT
 
-curl -fsSL "https://raw.githubusercontent.com/$REPO/$BRANCH/new-project" -o "$TMP" \
+curl -fsSL "https://raw.githubusercontent.com/$REPO/$BRANCH/breed-me" -o "$TMP" \
   || bail "Failed to download $SCRIPT_NAME. Check your internet connection."
 
 install -m 755 "$TMP" "$INSTALL_DIR/$SCRIPT_NAME"
