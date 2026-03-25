@@ -1,148 +1,130 @@
 # breed-me-an-app
 
-> Stop copy-pasting your setup ritual. One command, you're breeding.
+> `git init` is just the warmup. `breed-me` does the whole thing.
 
-`breed-me` is a terminal TUI that bootstraps a new project from zero to GitHub-ready in seconds — picks your stack, scaffolds boilerplate, sets up git identity per-repo, optionally creates a GitHub repo, and pushes the first commit. All without leaving your terminal.
+Stack chosen. Boilerplate written. GitHub repo created. First commit pushed. `cd` command on your clipboard. Done — before your IDE finishes opening.
 
 ---
 
-## Install
-
-**Prerequisites**
+## Quickstart
 
 ```sh
-brew install gum   # TUI engine
-brew install gh    # GitHub CLI (skip if using --local)
-gh auth login      # if not already authenticated
-```
+# prerequisites (once)
+brew install gum gh
+gh auth login
 
-**Install `breed-me`**
-
-```sh
+# install
 curl -fsSL https://raw.githubusercontent.com/unlocalhosted/breed-me-an-app/main/install.sh | bash
+
+# go
+breed-me
 ```
 
-Installs to `/usr/local/bin` if writable, otherwise falls back to `~/.local/bin`. If using `~/.local/bin`, make sure it's in your `PATH`:
-
-```sh
-export PATH="$HOME/.local/bin:$PATH"  # add to ~/.zshrc or ~/.bashrc
-```
+> If installed to `~/.local/bin`, add it to your PATH: `export PATH="$HOME/.local/bin:$PATH"`
 
 ---
 
-## Usage
-
-```sh
-breed-me              # interactive project setup
-breed-me list         # show previously created projects
-breed-me --local      # skip GitHub — local git repo only
-breed-me --dry-run    # preview what would be created, no side effects
-breed-me --update     # update to the latest version
-breed-me --help       # show usage
-```
-
----
-
-## What it does
+## The flow
 
 ```
 ╔════════════════════════════════════════════════════╗
-║                                                    ║
-║                   ◆ breed-me                    ║
+║                   ◆ breed-me                       ║
 ║            Bootstrap a repo in seconds             ║
-║                                                    ║
 ╚════════════════════════════════════════════════════╝
 
-  Project name  › my-app                   (normalized to kebab-case)
-  Parent dir    › ~/work                   (remembers last choice)
-  Identity      › work                     (saved profile)
-  Tech stack    › TypeScript
-  License       › MIT
-  Branch        › main                     (validated)
-  .env.example  › Yes
-  Add CI?       › Yes
-  Push to GitHub? Yes
-  Push to        › my-org                  (personal or any org you belong to)
-  Visibility    › private
-  Description   › Does something cool
+  Project name    › my-app          ← normalized to kebab-case
+  Parent dir      › ~/work          ← remembers your last pick
+  Identity        › work            ← saved profile (name + email)
+  Stack           › TypeScript
+  License         › MIT
+  Branch          › main
+  .env.example?   › Yes
+  GitHub Actions? › Yes
+  Push to GitHub? › Yes
+  Owner           › my-org          ← personal account or any org
+  Visibility      › private
+  Description     › Does something cool
 
-  ┌──────────────────────────────────────────────────────┐
-  │  Project    my-app                                   │
-  │  Path       ~/work/my-app                            │
-  │  Identity   Jane Doe <jane@work.com>                 │
-  │  Stack      TypeScript                               │
-  │  License    MIT                                      │
-  │  Branch     main                                     │
-  │  CI         yes                                      │
-  │  Owner      my-org                                   │
-  │  GitHub     private                                  │
-  └──────────────────────────────────────────────────────┘
+  ┌──────────────────────────────────────────────────┐
+  │  Project    my-app                               │
+  │  Path       ~/work/my-app                        │
+  │  Identity   Jane Doe <jane@work.com>             │
+  │  Stack      TypeScript  ·  MIT  ·  main          │
+  │  CI         yes  ·  GitHub  private              │
+  │  Owner      my-org                               │
+  └──────────────────────────────────────────────────┘
 
   Create project? Yes
 
   ⠸ Creating GitHub repo...
   ✓ my-app is ready  →  https://github.com/my-org/my-app
 
-  Open in editor › Cursor           (only shows installed editors)
+  Open in editor › Cursor    ← only installed editors appear
 
-  cd ~/work/my-app  (copied to clipboard)
+  cd ~/work/my-app            ← already on your clipboard
 ```
 
 ---
 
-## Features
+## Commands
 
-### Identity profiles
-Save name/email combos as named profiles (e.g. `work`, `personal`). On subsequent runs, pick from the saved list. Stored in `~/.config/breed-me/profiles`.
+```sh
+breed-me            # start a new project
+breed-me list       # see everything you've spawned
+breed-me --local    # skip GitHub entirely — local git repo only
+breed-me --dry-run  # preview what would happen, touch nothing
+breed-me --update   # update to the latest version
+breed-me --help     # usage
+```
 
-### Stack boilerplate
+---
 
-| Stack | What you get |
+## Stacks
+
+| Stack | What gets created |
 |---|---|
 | **Node.js** | `package.json`, `index.js`, `.gitignore` |
 | **TypeScript** | `package.json`, `tsconfig.json`, `src/index.ts`, `.gitignore` |
 | **Python** | `main.py`, `requirements.txt`, `.gitignore` |
-| **Go** | `main.go`, `go.mod` (module path prefilled), `.gitignore` |
-| **Rust** | `cargo init` scaffolding if cargo is installed, `.gitignore` |
-| **React / Next.js** | `.gitignore` + instruction to run `create-next-app` |
-| **Bare** | `README.md`, `.gitignore` — nothing else |
-| **From template →** | Clone any GitHub template repo as the base |
+| **Go** | `main.go`, `go.mod` (module path set to your GitHub handle), `.gitignore` |
+| **Rust** | Full `cargo init` if cargo is installed, `.gitignore` |
+| **React / Next.js** | `.gitignore` + scaffold command to run after |
+| **Bare** | `README.md` + `.gitignore` — nothing else |
+| **From template →** | Clone any GitHub template repo as the starting point |
 
-Every stack gets a `README.md` prefilled with your project name and description.
-
-### GitHub Actions CI
-Opt-in per project. Writes `.github/workflows/ci.yml` tailored to your stack — build, test, correct language version. Triggers on push and pull request to your default branch.
-
-### License picker
-MIT, Apache 2.0, GPL-3.0, or None. Generates a proper `LICENSE` file with your name and year.
-
-### Org support
-If your GitHub account belongs to organizations, you're offered a choice: push to your personal account or any of your orgs.
-
-### Local-only mode
-Pass `--local` to skip all GitHub steps — no `gh` required, no repo created, just a clean local git repo.
-
-### Project history
-`breed-me list` shows every project you've created: name, local path, GitHub URL, and date.
-
-### Smart defaults
-- **Directory picker** remembers your last-used parent directory
-- **Editor picker** only shows editors that are actually installed
-- **Name normalization** converts `My App` → `my-app` automatically
-- **Branch validation** rejects invalid git ref names before creation
-- **`cd` command** is copied to clipboard automatically after setup
+Every stack includes a `README.md` and an optional `LICENSE` file prefilled with your name and year.
 
 ---
 
-## Config files
+## GitHub Actions CI
 
-All config lives in `~/.config/breed-me/`:
+Opt-in. Picks the right workflow for your stack — correct language version, build step, test step — and writes it to `.github/workflows/ci.yml`. Triggers on push and pull request against your default branch.
+
+---
+
+## Identity profiles
+
+`breed-me` always sets `git user.name` and `git user.email` per repo — no accidental commits from the wrong account. Save identities as named profiles (`work`, `personal`) and pick from the list on each run instead of typing from scratch.
+
+Profiles live in `~/.config/breed-me/profiles`.
+
+---
+
+## Org support
+
+If your GitHub account belongs to organizations, you're shown a picker: your personal account at the top, then each org. The selected owner is used for the repo name, `go.mod` module path, and the final GitHub URL.
+
+---
+
+## Config
+
+Everything lives in `~/.config/breed-me/`:
 
 | File | Contents |
 |---|---|
-| `profiles` | Saved git identities (`label\|name\|email`) |
-| `history` | Project creation log (`name\|path\|url\|date`) |
-| `last_dir` | Last-used parent directory |
+| `profiles` | Saved git identities |
+| `history` | Every project you've created (name, path, URL, date) |
+| `last_dir` | Your last-used parent directory |
 
 ---
 
@@ -150,17 +132,11 @@ All config lives in `~/.config/breed-me/`:
 
 ```sh
 rm "$(command -v breed-me)"
-rm -rf ~/.config/breed-me   # optional: remove saved profiles and history
+rm -rf ~/.config/breed-me    # removes saved profiles and history
 ```
 
 ---
 
-## Built with
-
-- [gum](https://github.com/charmbracelet/gum) — TUI components for shell scripts
-- [gh](https://cli.github.com/) — GitHub CLI
-- bash
-
----
+Built with [gum](https://github.com/charmbracelet/gum), [gh](https://cli.github.com/), and bash.
 
 <sub>Part of [unlocalhosted](https://github.com/unlocalhosted)</sub>
