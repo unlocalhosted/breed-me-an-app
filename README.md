@@ -1,6 +1,6 @@
 # breed-me-an-app
 
-> Stop copy-pasting your setup ritual. One command, you're coding.
+> Stop copy-pasting your setup ritual. One command, you're breeding.
 
 `breed-me` is a terminal TUI that bootstraps a new project from zero to GitHub-ready in seconds — picks your stack, scaffolds boilerplate, sets up git identity per-repo, optionally creates a GitHub repo, and pushes the first commit. All without leaving your terminal.
 
