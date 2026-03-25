@@ -24,6 +24,36 @@ safe_timeout() {
   fi
 }
 
+die() {
+  echo ""
+  gum style --foreground 196 "  ✗ $*"
+  echo ""
+  exit 1
+}
+
+# ─── wizard ───────────────────────────────────────────────────────────────────
+# PROGRESS_LINES accumulates "  key   value" entries shown above each prompt.
+# show_header clears the screen and redraws the phase header + all progress so
+# far — this is what prevents terminal jumping between prompts.
+PROGRESS_LINES=()
+
+add_progress() {
+  PROGRESS_LINES+=("  $(printf '%-14s' "$1")  $2")
+}
+
+show_header() {
+  clear
+  gum style \
+    --foreground 212 --border-foreground 212 --border normal \
+    --padding "0 2" --margin "0 2" \
+    "◆ breed-me  ·  $1"
+  if [[ ${#PROGRESS_LINES[@]} -gt 0 ]]; then
+    echo ""
+    gum style --foreground 240 "${PROGRESS_LINES[@]}"
+    echo ""
+  fi
+}
+
 # ─── --help ───────────────────────────────────────────────────────────────────
 show_help() {
   printf "Usage: breed-me [SUBCOMMAND] [OPTIONS]\n\n"
@@ -104,12 +134,6 @@ if [[ "$SUBCOMMAND" == "list" ]]; then
   exit 0
 fi
 
-# ─── header ───────────────────────────────────────────────────────────────────
-gum style \
-  --foreground 212 --border-foreground 212 --border double \
-  --align center --width 52 --margin "1 2" --padding "1 4" \
-  "◆ breed-me" "Bootstrap a repo in seconds"
-
 # ─── prefetch github data ─────────────────────────────────────────────────────
 GITHUB_USER=""
 GITHUB_ORGS=""
@@ -141,52 +165,108 @@ if [[ "$FLAG_LOCAL" == false ]]; then
   fi
 fi
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# PHASE 1 — PROJECT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+show_header "Project  ·  1 of 4"
+
 # ─── project name ─────────────────────────────────────────────────────────────
-PROJECT_NAME_RAW=$(gum input --prompt "  Project name › " --placeholder "my-app")
-[[ -z "$PROJECT_NAME_RAW" ]] && \
-  gum style --foreground 196 "  Aborted: name is required." && exit 1
+PROJECT_NAME_RAW=$(gum input --prompt "  Name › " --placeholder "my-app")
+[[ -z "$PROJECT_NAME_RAW" ]] && die "project name is required — try: my-app"
 
 PROJECT_NAME=$(printf "%s" "$PROJECT_NAME_RAW" \
   | tr '[:upper:]' '[:lower:]' \
   | tr ' _' '-' \
   | tr -cd 'a-z0-9-')
 
-# strip leading/trailing hyphens (e.g. "--my-app" → "my-app")
+# strip leading/trailing hyphens
 PROJECT_NAME="${PROJECT_NAME#"${PROJECT_NAME%%[!-]*}"}"
 PROJECT_NAME="${PROJECT_NAME%"${PROJECT_NAME##*[!-]}"}"
 
 # enforce GitHub's 100-char repo name limit
 if [[ ${#PROJECT_NAME} -gt 100 ]]; then
   PROJECT_NAME="${PROJECT_NAME:0:100}"
-  PROJECT_NAME="${PROJECT_NAME%%-}"   # don't end on a hyphen after truncation
+  PROJECT_NAME="${PROJECT_NAME%%-}"
 fi
 
-if [[ "$PROJECT_NAME" != "$PROJECT_NAME_RAW" ]]; then
-  gum style --foreground 214 "  Name normalized: $PROJECT_NAME_RAW → $PROJECT_NAME"
-fi
+[[ "$PROJECT_NAME" != "$PROJECT_NAME_RAW" ]] && \
+  gum style --foreground 214 "  Normalized: $PROJECT_NAME_RAW → $PROJECT_NAME"
 [[ -z "$PROJECT_NAME" ]] && \
-  gum style --foreground 196 "  Aborted: name is empty after normalization." && exit 1
+  die "\"$PROJECT_NAME_RAW\" has no valid characters — try: my-app"
 
-# ─── parent directory ─────────────────────────────────────────────────────────
-DEFAULT_DIR="$HOME"
-if [[ -f "$LAST_DIR_FILE" ]]; then
-  SAVED_DIR=$(cat "$LAST_DIR_FILE")
-  [[ -d "$SAVED_DIR" ]] && DEFAULT_DIR="$SAVED_DIR"
+add_progress "project" "$PROJECT_NAME"
+
+# ─── stack ────────────────────────────────────────────────────────────────────
+show_header "Project  ·  1 of 4"
+
+STACK_OPTIONS=("Node.js" "TypeScript" "Python" "Go" "Rust" "React / Next.js" "Bare")
+[[ "$FLAG_LOCAL" == false ]] && STACK_OPTIONS+=("From template →")
+
+STACK=$(printf "%s\n" "${STACK_OPTIONS[@]}" | gum choose --header "  Stack" --height 10)
+add_progress "stack" "$STACK"
+
+# ─── template repo ────────────────────────────────────────────────────────────
+TEMPLATE_REPO=""
+if [[ "$STACK" == "From template →" ]]; then
+  show_header "Project  ·  1 of 4"
+  TEMPLATE_REPO=$(gum input --prompt "  GitHub template › " --placeholder "owner/repo")
+  [[ -z "$TEMPLATE_REPO" ]] && die "template repo is required — try: owner/repo"
+  add_progress "template" "$TEMPLATE_REPO"
 fi
 
-PARENT_DIR=$(gum file --directory --file=false \
-  --header "  Parent directory" \
-  "$DEFAULT_DIR") || { gum style --foreground 196 "  Aborted."; exit 1; }
-[[ -z "$PARENT_DIR" ]] && gum style --foreground 196 "  Aborted: no directory selected." && exit 1
-PARENT_DIR="${PARENT_DIR%/}"
-printf "%s\n" "$PARENT_DIR" > "$LAST_DIR_FILE"
+# ═══════════════════════════════════════════════════════════════════════════════
+# PHASE 2 — GITHUB
+# ═══════════════════════════════════════════════════════════════════════════════
 
-PROJECT_PATH="$PARENT_DIR/$PROJECT_NAME"
+PUSH_TO_GITHUB=false
+OWNER="${GITHUB_USER}"
+VISIBILITY="private"
+DESCRIPTION=""
 
-# ─── identity: saved profiles ─────────────────────────────────────────────────
+show_header "GitHub  ·  2 of 4"
+
+if [[ "$FLAG_LOCAL" == true ]]; then
+  add_progress "github" "local only"
+elif [[ "$STACK" == "From template →" ]]; then
+  # template always pushes to GitHub
+  PUSH_TO_GITHUB=true
+  if [[ -n "$GITHUB_ORGS" ]]; then
+    OWNER=$(printf "%s\n%s\n" "$GITHUB_USER" "$GITHUB_ORGS" | gum choose --header "  Owner" --height 8)
+    add_progress "owner" "$OWNER"
+    show_header "GitHub  ·  2 of 4"
+  fi
+  VISIBILITY=$(gum choose --header "  Visibility" --height 4 "private" "public")
+  add_progress "github" "$OWNER / $VISIBILITY"
+else
+  gum confirm "  Push to GitHub?" && PUSH_TO_GITHUB=true || true
+
+  if [[ "$PUSH_TO_GITHUB" == true ]]; then
+    if [[ -n "$GITHUB_ORGS" ]]; then
+      show_header "GitHub  ·  2 of 4"
+      OWNER=$(printf "%s\n%s\n" "$GITHUB_USER" "$GITHUB_ORGS" | gum choose --header "  Owner" --height 8)
+      add_progress "owner" "$OWNER"
+    fi
+    show_header "GitHub  ·  2 of 4"
+    VISIBILITY=$(gum choose --header "  Visibility" --height 4 "private" "public")
+    add_progress "github" "$OWNER / $VISIBILITY"
+  else
+    add_progress "github" "local only"
+  fi
+fi
+
+show_header "GitHub  ·  2 of 4"
+DESCRIPTION=$(gum input --prompt "  Description (optional) › " --placeholder "What does this project do?")
+[[ -n "$DESCRIPTION" ]] && add_progress "description" "$DESCRIPTION"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PHASE 3 — IDENTITY
+# ═══════════════════════════════════════════════════════════════════════════════
+
+show_header "Identity  ·  3 of 4"
+
 save_profile() {
   local label="${1//|/}" name="$2" email="$3"
-  # use awk for exact field match — grep regex would misinterpret label chars like . * [
   awk -F'|' -v l="$label" '$1 != l' "$PROFILES_FILE" > "${PROFILES_FILE}.tmp" 2>/dev/null || true
   mv "${PROFILES_FILE}.tmp" "$PROFILES_FILE" 2>/dev/null || true
   printf "%s|%s|%s\n" "$label" "$name" "$email" >> "$PROFILES_FILE"
@@ -194,7 +274,6 @@ save_profile() {
 
 load_profile() {
   local label="$1" line
-  # awk exits 0 even on no match, avoiding set -e issues with grep's exit 1
   line=$(awk -F'|' -v l="$label" '$1 == l {print; exit}' "$PROFILES_FILE" 2>/dev/null || true)
   GIT_NAME=$(cut -d'|' -f2 <<< "$line")
   GIT_EMAIL=$(cut -d'|' -f3 <<< "$line")
@@ -206,11 +285,14 @@ GIT_EMAIL=""
 if [[ -f "$PROFILES_FILE" ]] && [[ -s "$PROFILES_FILE" ]]; then
   PROFILE_CHOICE=$(
     { cut -d'|' -f1 "$PROFILES_FILE"; printf "+ New profile\n"; } \
-    | gum choose --header "  Identity"
+    | gum choose --header "  Identity" --height 8
   )
   if [[ "$PROFILE_CHOICE" == "+ New profile" ]]; then
+    show_header "Identity  ·  3 of 4"
     GIT_NAME=$(gum input --prompt "  git user.name › " --placeholder "Your Name")
+    show_header "Identity  ·  3 of 4"
     GIT_EMAIL=$(gum input --prompt "  git user.email › " --placeholder "you@example.com")
+    show_header "Identity  ·  3 of 4"
     PROFILE_LABEL=$(gum input --prompt "  Save as › " --placeholder "work / personal")
     PROFILE_LABEL="${PROFILE_LABEL//|/}"
     [[ -n "$PROFILE_LABEL" ]] && save_profile "$PROFILE_LABEL" "$GIT_NAME" "$GIT_EMAIL"
@@ -219,103 +301,89 @@ if [[ -f "$PROFILES_FILE" ]] && [[ -s "$PROFILES_FILE" ]]; then
   fi
 else
   GIT_NAME=$(gum input --prompt "  git user.name › " --placeholder "Your Name")
+  show_header "Identity  ·  3 of 4"
   GIT_EMAIL=$(gum input --prompt "  git user.email › " --placeholder "you@example.com")
+  show_header "Identity  ·  3 of 4"
   PROFILE_LABEL=$(gum input --prompt "  Save as profile (optional) › " --placeholder "work / personal")
   PROFILE_LABEL="${PROFILE_LABEL//|/}"
   [[ -n "$PROFILE_LABEL" ]] && save_profile "$PROFILE_LABEL" "$GIT_NAME" "$GIT_EMAIL"
 fi
 
-[[ -z "$GIT_NAME" ]]  && gum style --foreground 196 "  Name is required." && exit 1
-[[ -z "$GIT_EMAIL" ]] && gum style --foreground 196 "  Email is required." && exit 1
+[[ -z "$GIT_NAME" ]]  && die "git user.name is required"
+[[ -z "$GIT_EMAIL" ]] && die "git user.email is required"
+add_progress "identity" "$GIT_NAME <$GIT_EMAIL>"
 
-# ─── stack ────────────────────────────────────────────────────────────────────
-STACK_OPTIONS=("Node.js" "TypeScript" "Python" "Go" "Rust" "React / Next.js" "Bare")
-[[ "$FLAG_LOCAL" == false ]] && STACK_OPTIONS+=("From template →")
+# ═══════════════════════════════════════════════════════════════════════════════
+# PHASE 4 — DETAILS
+# ═══════════════════════════════════════════════════════════════════════════════
 
-STACK=$(printf "%s\n" "${STACK_OPTIONS[@]}" | gum choose --header "  Tech stack")
-
-TEMPLATE_REPO=""
-if [[ "$STACK" == "From template →" ]]; then
-  TEMPLATE_REPO=$(gum input --prompt "  GitHub template › " --placeholder "owner/repo")
-  [[ -z "$TEMPLATE_REPO" ]] && \
-    gum style --foreground 196 "  Aborted: template repo required." && exit 1
-fi
+show_header "Details  ·  4 of 4"
 
 # ─── license ──────────────────────────────────────────────────────────────────
 LICENSE="None"
-[[ "$STACK" != "From template →" ]] && \
-  LICENSE=$(gum choose --header "  License" "MIT" "Apache 2.0" "GPL-3.0" "None")
+if [[ "$STACK" != "From template →" ]]; then
+  LICENSE=$(gum choose --header "  License" --height 6 "MIT" "Apache 2.0" "GPL-3.0" "None")
+  add_progress "license" "$LICENSE"
+fi
 
 # ─── branch name ──────────────────────────────────────────────────────────────
+show_header "Details  ·  4 of 4"
 while true; do
   BRANCH=$(gum input --prompt "  Default branch › " --value "main")
   BRANCH="${BRANCH:-main}"
   if [[ "$BRANCH" =~ \.\. ]] \
      || [[ "$BRANCH" =~ [[:space:]] ]] \
      || [[ ! "$BRANCH" =~ ^[a-zA-Z0-9/_.-]+$ ]]; then
-    gum style --foreground 196 "  Invalid branch name. Use [a-zA-Z0-9/_.-], no spaces or '..'."
+    gum style --foreground 196 "  Invalid — use letters, numbers, /, _, -, . and no '..'"
   else
     break
   fi
 done
+add_progress "branch" "$BRANCH"
 
 # ─── .env.example ─────────────────────────────────────────────────────────────
 ADD_ENV=false
-[[ "$STACK" != "From template →" ]] && \
-  { gum confirm "  Add .env.example?" && ADD_ENV=true || true; }
+if [[ "$STACK" != "From template →" ]]; then
+  show_header "Details  ·  4 of 4"
+  gum style --foreground 240 "  Creates .env.example as a template for environment variables."
+  echo ""
+  gum confirm "  Add .env.example?" && ADD_ENV=true || true
+  add_progress ".env.example" "$(if $ADD_ENV; then printf yes; else printf no; fi)"
+fi
 
 # ─── github actions ci ────────────────────────────────────────────────────────
 ADD_CI=false
 if [[ "$STACK" != "From template →" ]] && [[ "$STACK" != "Bare" ]]; then
+  show_header "Details  ·  4 of 4"
+  gum style --foreground 240 "  Writes .github/workflows/ci.yml — build + test on push and PR."
+  echo ""
   gum confirm "  Add GitHub Actions CI?" && ADD_CI=true || true
+  add_progress "CI" "$(if $ADD_CI; then printf yes; else printf no; fi)"
 fi
 
-# ─── push to github ───────────────────────────────────────────────────────────
-PUSH_TO_GITHUB=false
-OWNER="${GITHUB_USER}"
-VISIBILITY="private"
-DESCRIPTION=""
-
-if [[ "$FLAG_LOCAL" == true ]]; then
-  PUSH_TO_GITHUB=false
-elif [[ "$STACK" == "From template →" ]]; then
-  PUSH_TO_GITHUB=true
-else
-  gum confirm "  Push to GitHub?" && PUSH_TO_GITHUB=true || true
+# ─── parent directory ─────────────────────────────────────────────────────────
+DEFAULT_DIR="$HOME"
+if [[ -f "$LAST_DIR_FILE" ]]; then
+  SAVED_DIR=$(cat "$LAST_DIR_FILE")
+  [[ -d "$SAVED_DIR" ]] && DEFAULT_DIR="$SAVED_DIR"
 fi
 
-if [[ "$PUSH_TO_GITHUB" == true ]]; then
-  if [[ -n "$GITHUB_ORGS" ]]; then
-    OWNER=$(printf "%s\n%s\n" "$GITHUB_USER" "$GITHUB_ORGS" | gum choose --header "  Push to")
-  else
-    OWNER="$GITHUB_USER"
-  fi
-  VISIBILITY=$(gum choose --header "  Visibility" "private" "public")
-fi
+show_header "Details  ·  4 of 4"
+PARENT_DIR=$(gum file --directory --file=false \
+  --header "  Parent directory" \
+  "$DEFAULT_DIR") || die "no directory selected"
+[[ -z "$PARENT_DIR" ]] && die "no directory selected"
+PARENT_DIR="${PARENT_DIR%/}"
+printf "%s\n" "$PARENT_DIR" > "$LAST_DIR_FILE"
 
-DESCRIPTION=$(gum input \
-  --prompt "  Description (optional) › " \
-  --placeholder "What does this project do?")
+PROJECT_PATH="$PARENT_DIR/$PROJECT_NAME"
+add_progress "path" "$PROJECT_PATH"
 
-# ─── summary ──────────────────────────────────────────────────────────────────
-echo ""
-gum style --foreground 240 \
-  "  Project    $PROJECT_NAME" \
-  "  Path       $PROJECT_PATH" \
-  "  Identity   $GIT_NAME <$GIT_EMAIL>" \
-  "  Stack      $STACK${TEMPLATE_REPO:+ ($TEMPLATE_REPO)}" \
-  "  License    $LICENSE" \
-  "  Branch     $BRANCH" \
-  "  CI         $(if $ADD_CI; then printf yes; else printf no; fi)"
+# ═══════════════════════════════════════════════════════════════════════════════
+# READY
+# ═══════════════════════════════════════════════════════════════════════════════
 
-if [[ "$PUSH_TO_GITHUB" == true ]]; then
-  gum style --foreground 240 \
-    "  Owner      $OWNER" \
-    "  GitHub     $VISIBILITY"
-else
-  gum style --foreground 240 "  GitHub     local only"
-fi
-echo ""
+show_header "Ready"
 
 if [[ "$FLAG_DRY_RUN" == true ]]; then
   gum style --foreground 214 --border rounded --border-foreground 214 \
@@ -325,20 +393,18 @@ if [[ "$FLAG_DRY_RUN" == true ]]; then
   exit 0
 fi
 
-gum confirm "  Create project?" || { printf "  Aborted.\n"; exit 0; }
+gum confirm "  Breed it?" || { printf "  Aborted.\n"; exit 0; }
 echo ""
 
 # ─── guard ────────────────────────────────────────────────────────────────────
 if [[ -d "$PROJECT_PATH" ]]; then
-  gum style --foreground 196 "  Error: '$PROJECT_PATH' already exists."
-  exit 1
+  die "'$PROJECT_PATH' already exists — pick a different name or directory"
 fi
 
 # ─── write helpers ────────────────────────────────────────────────────────────
 YEAR=$(date +%Y)
 LICENSE_SPDX="${LICENSE/None/UNLICENSED}"
 LICENSE_SPDX="${LICENSE_SPDX/ /-}"
-# JSON-safe description: escape backslashes then double quotes
 JSON_DESCRIPTION="${DESCRIPTION//\\/\\\\}"
 JSON_DESCRIPTION="${JSON_DESCRIPTION//\"/\\\"}"
 
@@ -562,16 +628,12 @@ if [[ "$STACK" == "From template →" ]]; then
 
 # ─── standard flow ────────────────────────────────────────────────────────────
 else
-  mkdir -p "$PROJECT_PATH" || {
-    gum style --foreground 196 "  Error: cannot create '$PROJECT_PATH'. Check permissions."
-    exit 1
-  }
+  mkdir -p "$PROJECT_PATH" || die "cannot create '$PROJECT_PATH' — check permissions"
   cd "$PROJECT_PATH"
   git init -q -b "$BRANCH"
   git config user.name  "$GIT_NAME"
   git config user.email "$GIT_EMAIL"
 
-  # Go module path: full github path when pushing, plain name when local-only
   GO_MODULE="${OWNER:+github.com/$OWNER/}$PROJECT_NAME"
 
   case "$STACK" in
@@ -758,7 +820,7 @@ EOF
       gum style --foreground 196 \
         "  GitHub repo creation failed. Your local repo is intact." \
         "  To retry: gh repo create $OWNER/$PROJECT_NAME --source=$PROJECT_PATH --push"
-      PUSH_TO_GITHUB=false   # skip repo URL lookup below
+      PUSH_TO_GITHUB=false
     fi
   fi
 fi
@@ -771,7 +833,8 @@ command -v zed    &>/dev/null && EDITOR_OPTIONS+=("Zed")
 command -v nvim   &>/dev/null && EDITOR_OPTIONS+=("Neovim")
 EDITOR_OPTIONS+=("Skip")
 
-EDITOR_CHOICE=$(printf "%s\n" "${EDITOR_OPTIONS[@]}" | gum choose --header "  Open in editor")
+clear
+EDITOR_CHOICE=$(printf "%s\n" "${EDITOR_OPTIONS[@]}" | gum choose --header "  Open in editor" --height 6)
 
 case "$EDITOR_CHOICE" in
   "VS Code")  code   "$PROJECT_PATH" ;;
@@ -786,6 +849,7 @@ if [[ "$PUSH_TO_GITHUB" == true ]]; then
   REPO_URL=$(gh repo view "$OWNER/$PROJECT_NAME" --json url --jq .url 2>/dev/null || true)
 fi
 
+clear
 echo ""
 gum style \
   --foreground 82 --border-foreground 82 --border rounded \
@@ -796,9 +860,10 @@ echo ""
 CD_CMD="cd $PROJECT_PATH"
 if command -v pbcopy &>/dev/null; then
   printf "%s" "$CD_CMD" | pbcopy
-  gum style --foreground 240 "  $CD_CMD  (copied to clipboard)"
+  gum style --foreground 255 "  \$ $CD_CMD"
+  gum style --foreground 240 "  (copied to clipboard)"
 else
-  gum style --foreground 240 "  $CD_CMD"
+  gum style --foreground 255 "  \$ $CD_CMD"
 fi
 echo ""
 
