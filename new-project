@@ -1,67 +1,198 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROFILES_DIR="$HOME/.config/new-project"
-PROFILES_FILE="$PROFILES_DIR/profiles"
+# ─── config ───────────────────────────────────────────────────────────────────
+CONFIG_DIR="$HOME/.config/new-project"
+PROFILES_FILE="$CONFIG_DIR/profiles"
+HISTORY_FILE="$CONFIG_DIR/history"
+LAST_DIR_FILE="$CONFIG_DIR/last_dir"
+SELF_REPO="unlocalhosted/breed-me-an-app"
+SELF_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
-# ─── dependency check ────────────────────────────────────────────────────────
-for cmd in git gh gum; do
-  if ! command -v "$cmd" &>/dev/null; then
-    printf "error: '%s' is required but not installed.\n" "$cmd" >&2
-    [[ "$cmd" == "gum" ]] && printf "  brew install gum\n" >&2
-    exit 1
+mkdir -p "$CONFIG_DIR"
+
+# ─── cleanup ──────────────────────────────────────────────────────────────────
+TMPFILES=()
+cleanup() { rm -f "${TMPFILES[@]}" 2>/dev/null || true; }
+trap cleanup EXIT INT TERM
+
+# ─── helpers ──────────────────────────────────────────────────────────────────
+safe_timeout() {
+  if command -v timeout &>/dev/null; then timeout "$@"
+  elif command -v gtimeout &>/dev/null; then gtimeout "$@"
+  else shift; "$@"
   fi
+}
+
+# ─── --help ───────────────────────────────────────────────────────────────────
+show_help() {
+  printf "Usage: new-project [SUBCOMMAND] [OPTIONS]\n\n"
+  printf "Subcommands:\n"
+  printf "  list        Show previously created projects\n\n"
+  printf "Options:\n"
+  printf "  --local     Skip all GitHub steps (no gh required)\n"
+  printf "  --dry-run   Preview inputs without creating anything\n"
+  printf "  --update    Update to the latest version\n"
+  printf "  -h, --help  Show this help\n"
+}
+
+# ─── --update ─────────────────────────────────────────────────────────────────
+do_update() {
+  local tmp
+  tmp=$(mktemp); TMPFILES+=("$tmp")
+  printf "Updating new-project...\n"
+  curl -fsSL --max-time 30 \
+    "https://raw.githubusercontent.com/$SELF_REPO/main/new-project" \
+    -o "$tmp" || { printf "error: download failed\n" >&2; exit 1; }
+  install -m 755 "$tmp" "$SELF_PATH"
+  printf "Done. You are on the latest version.\n"
+  exit 0
+}
+
+# ─── flags + subcommand ───────────────────────────────────────────────────────
+FLAG_LOCAL=false
+FLAG_DRY_RUN=false
+SUBCOMMAND=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --local)    FLAG_LOCAL=true ;;
+    --dry-run)  FLAG_DRY_RUN=true ;;
+    --update)   do_update ;;
+    -h|--help)  show_help; exit 0 ;;
+    list)       SUBCOMMAND="list" ;;
+    *)          printf "error: unknown option: %s\n" "$1" >&2; exit 1 ;;
+  esac
+  shift
 done
 
-# ─── header ──────────────────────────────────────────────────────────────────
+# ─── dep check ────────────────────────────────────────────────────────────────
+for cmd in git gum; do
+  command -v "$cmd" &>/dev/null || {
+    printf "error: '%s' is required. brew install %s\n" "$cmd" "$cmd" >&2
+    exit 1
+  }
+done
+if [[ "$FLAG_LOCAL" == false ]] && ! command -v gh &>/dev/null; then
+  printf "error: 'gh' is required for GitHub. brew install gh\n" >&2
+  printf "       Or use --local to skip GitHub.\n" >&2
+  exit 1
+fi
+
+# ─── list subcommand ──────────────────────────────────────────────────────────
+if [[ "$SUBCOMMAND" == "list" ]]; then
+  if [[ ! -f "$HISTORY_FILE" ]] || [[ ! -s "$HISTORY_FILE" ]]; then
+    gum style --foreground 240 "  No projects yet."
+    exit 0
+  fi
+  echo ""
+  while IFS='|' read -r pname ppath purl pdate; do
+    gum style --foreground 212 "  $pname"
+    gum style --foreground 240 \
+      "    path  $ppath" \
+      "    repo  ${purl:-local}" \
+      "    date  $pdate"
+    echo ""
+  done < "$HISTORY_FILE"
+  exit 0
+fi
+
+# ─── header ───────────────────────────────────────────────────────────────────
 gum style \
   --foreground 212 --border-foreground 212 --border double \
   --align center --width 52 --margin "1 2" --padding "1 4" \
   "◆ new-project" "Bootstrap a repo in seconds"
 
-# ─── project name + dir ──────────────────────────────────────────────────────
-PROJECT_NAME=$(gum input \
-  --prompt "  Project name › " \
-  --placeholder "my-app")
-[[ -z "$PROJECT_NAME" ]] && gum style --foreground 196 "  Aborted: project name is required." && exit 1
+# ─── prefetch github data ─────────────────────────────────────────────────────
+GITHUB_USER=""
+GITHUB_ORGS=""
+
+if [[ "$FLAG_LOCAL" == false ]]; then
+  PREFETCH_TMP=$(mktemp); TMPFILES+=("$PREFETCH_TMP")
+
+  gum spin --spinner dot --title "  Connecting to GitHub..." -- \
+    bash -c "
+      safe_timeout() {
+        if command -v timeout &>/dev/null; then timeout \"\$@\"
+        elif command -v gtimeout &>/dev/null; then gtimeout \"\$@\"
+        else shift; \"\$@\"; fi
+      }
+      safe_timeout 10 gh api user --jq .login > '$PREFETCH_TMP' 2>/dev/null || true
+      safe_timeout 10 gh api user/orgs --jq '.[].login' >> '$PREFETCH_TMP' 2>/dev/null || true
+    " || true
+
+  if [[ -s "$PREFETCH_TMP" ]]; then
+    GITHUB_USER=$(head -1 "$PREFETCH_TMP")
+    GITHUB_ORGS=$(tail -n +2 "$PREFETCH_TMP")
+  fi
+
+  if [[ -z "$GITHUB_USER" ]]; then
+    gum style --foreground 196 \
+      "  GitHub auth failed. Run: gh auth login" \
+      "  Or use --local to skip GitHub."
+    exit 1
+  fi
+fi
+
+# ─── project name ─────────────────────────────────────────────────────────────
+PROJECT_NAME_RAW=$(gum input --prompt "  Project name › " --placeholder "my-app")
+[[ -z "$PROJECT_NAME_RAW" ]] && \
+  gum style --foreground 196 "  Aborted: name is required." && exit 1
+
+PROJECT_NAME=$(printf "%s" "$PROJECT_NAME_RAW" \
+  | tr '[:upper:]' '[:lower:]' \
+  | tr ' _' '-' \
+  | tr -cd 'a-z0-9-')
+
+if [[ "$PROJECT_NAME" != "$PROJECT_NAME_RAW" ]]; then
+  gum style --foreground 214 "  Name normalized: $PROJECT_NAME_RAW → $PROJECT_NAME"
+fi
+[[ -z "$PROJECT_NAME" ]] && \
+  gum style --foreground 196 "  Aborted: name is empty after normalization." && exit 1
+
+# ─── parent directory ─────────────────────────────────────────────────────────
+DEFAULT_DIR="$HOME"
+if [[ -f "$LAST_DIR_FILE" ]]; then
+  SAVED_DIR=$(cat "$LAST_DIR_FILE")
+  [[ -d "$SAVED_DIR" ]] && DEFAULT_DIR="$SAVED_DIR"
+fi
 
 PARENT_DIR=$(gum file --directory --file=false \
   --header "  Parent directory" \
-  "$HOME")
+  "$DEFAULT_DIR")
 PARENT_DIR="${PARENT_DIR%/}"
+printf "%s\n" "$PARENT_DIR" > "$LAST_DIR_FILE"
+
 PROJECT_PATH="$PARENT_DIR/$PROJECT_NAME"
 
-# ─── identity: saved profiles ────────────────────────────────────────────────
-mkdir -p "$PROFILES_DIR"
-
+# ─── identity: saved profiles ─────────────────────────────────────────────────
 save_profile() {
-  local label="$1" name="$2" email="$3"
-  # remove existing entry with same label, then append
+  local label="${1//|/}" name="$2" email="$3"
   grep -v "^${label}|" "$PROFILES_FILE" > "${PROFILES_FILE}.tmp" 2>/dev/null || true
   mv "${PROFILES_FILE}.tmp" "$PROFILES_FILE" 2>/dev/null || true
-  echo "${label}|${name}|${email}" >> "$PROFILES_FILE"
+  printf "%s|%s|%s\n" "$label" "$name" "$email" >> "$PROFILES_FILE"
 }
 
 load_profile() {
-  local label="$1"
-  local line
+  local label="$1" line
   line=$(grep "^${label}|" "$PROFILES_FILE")
-  GIT_NAME=$(echo "$line" | cut -d'|' -f2)
-  GIT_EMAIL=$(echo "$line" | cut -d'|' -f3)
+  GIT_NAME=$(cut -d'|' -f2 <<< "$line")
+  GIT_EMAIL=$(cut -d'|' -f3 <<< "$line")
 }
+
+GIT_NAME=""
+GIT_EMAIL=""
 
 if [[ -f "$PROFILES_FILE" ]] && [[ -s "$PROFILES_FILE" ]]; then
   PROFILE_CHOICE=$(
-    {
-      cut -d'|' -f1 "$PROFILES_FILE"
-      echo "+ New profile"
-    } | gum choose --header "  Identity"
+    { cut -d'|' -f1 "$PROFILES_FILE"; printf "+ New profile\n"; } \
+    | gum choose --header "  Identity"
   )
-
   if [[ "$PROFILE_CHOICE" == "+ New profile" ]]; then
     GIT_NAME=$(gum input --prompt "  git user.name › " --placeholder "Your Name")
     GIT_EMAIL=$(gum input --prompt "  git user.email › " --placeholder "you@example.com")
     PROFILE_LABEL=$(gum input --prompt "  Save as › " --placeholder "work / personal")
+    PROFILE_LABEL="${PROFILE_LABEL//|/}"
     [[ -n "$PROFILE_LABEL" ]] && save_profile "$PROFILE_LABEL" "$GIT_NAME" "$GIT_EMAIL"
   else
     load_profile "$PROFILE_CHOICE"
@@ -70,56 +201,80 @@ else
   GIT_NAME=$(gum input --prompt "  git user.name › " --placeholder "Your Name")
   GIT_EMAIL=$(gum input --prompt "  git user.email › " --placeholder "you@example.com")
   PROFILE_LABEL=$(gum input --prompt "  Save as profile (optional) › " --placeholder "work / personal")
+  PROFILE_LABEL="${PROFILE_LABEL//|/}"
   [[ -n "$PROFILE_LABEL" ]] && save_profile "$PROFILE_LABEL" "$GIT_NAME" "$GIT_EMAIL"
 fi
 
-# ─── stack ───────────────────────────────────────────────────────────────────
-STACK=$(gum choose \
-  --header "  Tech stack" \
-  "Node.js" "TypeScript" "Python" "Go" "Rust" "React / Next.js" "Bare" "From template →")
+# ─── stack ────────────────────────────────────────────────────────────────────
+STACK_OPTIONS=("Node.js" "TypeScript" "Python" "Go" "Rust" "React / Next.js" "Bare")
+[[ "$FLAG_LOCAL" == false ]] && STACK_OPTIONS+=("From template →")
+
+STACK=$(printf "%s\n" "${STACK_OPTIONS[@]}" | gum choose --header "  Tech stack")
 
 TEMPLATE_REPO=""
 if [[ "$STACK" == "From template →" ]]; then
-  TEMPLATE_REPO=$(gum input \
-    --prompt "  GitHub template › " \
-    --placeholder "owner/repo")
-  [[ -z "$TEMPLATE_REPO" ]] && gum style --foreground 196 "  Aborted: template repo required." && exit 1
+  TEMPLATE_REPO=$(gum input --prompt "  GitHub template › " --placeholder "owner/repo")
+  [[ -z "$TEMPLATE_REPO" ]] && \
+    gum style --foreground 196 "  Aborted: template repo required." && exit 1
 fi
 
-# ─── license ─────────────────────────────────────────────────────────────────
+# ─── license ──────────────────────────────────────────────────────────────────
 LICENSE="None"
-if [[ "$STACK" != "From template →" ]]; then
+[[ "$STACK" != "From template →" ]] && \
   LICENSE=$(gum choose --header "  License" "MIT" "Apache 2.0" "GPL-3.0" "None")
-fi
 
-# ─── branch name ─────────────────────────────────────────────────────────────
-BRANCH=$(gum input --prompt "  Default branch › " --value "main")
-BRANCH="${BRANCH:-main}"
+# ─── branch name ──────────────────────────────────────────────────────────────
+while true; do
+  BRANCH=$(gum input --prompt "  Default branch › " --value "main")
+  BRANCH="${BRANCH:-main}"
+  if [[ "$BRANCH" =~ \.\. ]] \
+     || [[ "$BRANCH" =~ [[:space:]] ]] \
+     || [[ ! "$BRANCH" =~ ^[a-zA-Z0-9/_.-]+$ ]]; then
+    gum style --foreground 196 "  Invalid branch name. Use [a-zA-Z0-9/_.-], no spaces or '..'."
+  else
+    break
+  fi
+done
 
-# ─── .env.example ────────────────────────────────────────────────────────────
+# ─── .env.example ─────────────────────────────────────────────────────────────
 ADD_ENV=false
-if [[ "$STACK" != "From template →" ]]; then
-  gum confirm "  Add .env.example?" && ADD_ENV=true || true
+[[ "$STACK" != "From template →" ]] && \
+  { gum confirm "  Add .env.example?" && ADD_ENV=true || true; }
+
+# ─── github actions ci ────────────────────────────────────────────────────────
+ADD_CI=false
+if [[ "$STACK" != "From template →" ]] && [[ "$STACK" != "Bare" ]]; then
+  gum confirm "  Add GitHub Actions CI?" && ADD_CI=true || true
 fi
 
-# ─── visibility + description ────────────────────────────────────────────────
-# ─── owner (personal or org) ─────────────────────────────────────────────────
-GITHUB_USER=$(gh api user --jq .login 2>/dev/null || echo "")
-ORGS=$(gh api user/orgs --jq '.[].login' 2>/dev/null || true)
+# ─── push to github ───────────────────────────────────────────────────────────
+PUSH_TO_GITHUB=false
+OWNER="${GITHUB_USER}"
+VISIBILITY="private"
+DESCRIPTION=""
 
-if [[ -n "$ORGS" ]]; then
-  OWNER=$(printf "%s\n%s" "$GITHUB_USER" "$ORGS" | gum choose --header "  Push to")
+if [[ "$FLAG_LOCAL" == true ]]; then
+  PUSH_TO_GITHUB=false
+elif [[ "$STACK" == "From template →" ]]; then
+  PUSH_TO_GITHUB=true
 else
-  OWNER="$GITHUB_USER"
+  gum confirm "  Push to GitHub?" && PUSH_TO_GITHUB=true || true
 fi
 
-VISIBILITY=$(gum choose --header "  Visibility" "private" "public")
+if [[ "$PUSH_TO_GITHUB" == true ]]; then
+  if [[ -n "$GITHUB_ORGS" ]]; then
+    OWNER=$(printf "%s\n%s\n" "$GITHUB_USER" "$GITHUB_ORGS" | gum choose --header "  Push to")
+  else
+    OWNER="$GITHUB_USER"
+  fi
+  VISIBILITY=$(gum choose --header "  Visibility" "private" "public")
+fi
 
 DESCRIPTION=$(gum input \
   --prompt "  Description (optional) › " \
   --placeholder "What does this project do?")
 
-# ─── summary + confirm ───────────────────────────────────────────────────────
+# ─── summary ──────────────────────────────────────────────────────────────────
 echo ""
 gum style --foreground 240 \
   "  Project    $PROJECT_NAME" \
@@ -128,22 +283,38 @@ gum style --foreground 240 \
   "  Stack      $STACK${TEMPLATE_REPO:+ ($TEMPLATE_REPO)}" \
   "  License    $LICENSE" \
   "  Branch     $BRANCH" \
-  "  Owner      $OWNER" \
-  "  GitHub     $VISIBILITY"
-echo ""
-gum confirm "  Create project?" || { echo "  Aborted."; exit 0; }
+  "  CI         $(if $ADD_CI; then printf yes; else printf no; fi)"
+
+if [[ "$PUSH_TO_GITHUB" == true ]]; then
+  gum style --foreground 240 \
+    "  Owner      $OWNER" \
+    "  GitHub     $VISIBILITY"
+else
+  gum style --foreground 240 "  GitHub     local only"
+fi
 echo ""
 
-# ─── guard ───────────────────────────────────────────────────────────────────
+if [[ "$FLAG_DRY_RUN" == true ]]; then
+  gum style --foreground 214 --border rounded --border-foreground 214 \
+    --padding "0 2" --margin "0 2" \
+    "--dry-run: nothing was created."
+  echo ""
+  exit 0
+fi
+
+gum confirm "  Create project?" || { printf "  Aborted.\n"; exit 0; }
+echo ""
+
+# ─── guard ────────────────────────────────────────────────────────────────────
 if [[ -d "$PROJECT_PATH" ]]; then
   gum style --foreground 196 "  Error: '$PROJECT_PATH' already exists."
   exit 1
 fi
 
-# ─── helpers ─────────────────────────────────────────────────────────────────
+# ─── write helpers ────────────────────────────────────────────────────────────
 YEAR=$(date +%Y)
 LICENSE_SPDX="${LICENSE/None/UNLICENSED}"
-LICENSE_SPDX="${LICENSE_SPDX/ /-}"   # "Apache 2.0" → "Apache-2.0"
+LICENSE_SPDX="${LICENSE_SPDX/ /-}"
 
 write_readme() {
   cat > README.md <<EOF
@@ -227,7 +398,122 @@ EOF
   esac
 }
 
-# ─── template flow ───────────────────────────────────────────────────────────
+write_ci() {
+  $ADD_CI || return 0
+  mkdir -p .github/workflows
+  case "$STACK" in
+    "Node.js")
+      cat > .github/workflows/ci.yml <<EOF
+name: CI
+on:
+  push:
+    branches: [$BRANCH]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install
+      - run: npm test --if-present
+EOF
+      ;;
+    "TypeScript")
+      cat > .github/workflows/ci.yml <<EOF
+name: CI
+on:
+  push:
+    branches: [$BRANCH]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install
+      - run: npm run build
+      - run: npm test --if-present
+EOF
+      ;;
+    "Python")
+      cat > .github/workflows/ci.yml <<EOF
+name: CI
+on:
+  push:
+    branches: [$BRANCH]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt
+      - run: python -m pytest --tb=short -q
+EOF
+      ;;
+    "Go")
+      cat > .github/workflows/ci.yml <<EOF
+name: CI
+on:
+  push:
+    branches: [$BRANCH]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: stable }
+      - run: go build ./...
+      - run: go test ./...
+EOF
+      ;;
+    "Rust")
+      cat > .github/workflows/ci.yml <<EOF
+name: CI
+on:
+  push:
+    branches: [$BRANCH]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build
+      - run: cargo test
+EOF
+      ;;
+    "React / Next.js")
+      cat > .github/workflows/ci.yml <<EOF
+name: CI
+on:
+  push:
+    branches: [$BRANCH]
+  pull_request:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install
+      - run: npm run build
+EOF
+      ;;
+  esac
+}
+
+# ─── template flow ────────────────────────────────────────────────────────────
 if [[ "$STACK" == "From template →" ]]; then
   mkdir -p "$PARENT_DIR"
   cd "$PARENT_DIR"
@@ -241,15 +527,23 @@ if [[ "$STACK" == "From template →" ]]; then
   cd "$PROJECT_PATH"
   git config user.name  "$GIT_NAME"
   git config user.email "$GIT_EMAIL"
-  [[ "$BRANCH" != "main" ]] && git branch -m "$BRANCH"
 
-# ─── standard flow ───────────────────────────────────────────────────────────
+  if [[ "$BRANCH" != "main" ]]; then
+    git branch -m "$BRANCH"
+    git push origin "$BRANCH"
+    gh repo edit "$OWNER/$PROJECT_NAME" --default-branch "$BRANCH" 2>/dev/null || true
+  fi
+
+# ─── standard flow ────────────────────────────────────────────────────────────
 else
   mkdir -p "$PROJECT_PATH"
   cd "$PROJECT_PATH"
   git init -q -b "$BRANCH"
   git config user.name  "$GIT_NAME"
   git config user.email "$GIT_EMAIL"
+
+  # Go module path: full github path when pushing, plain name when local-only
+  GO_MODULE="${OWNER:+github.com/$OWNER/}$PROJECT_NAME"
 
   case "$STACK" in
     "Node.js")
@@ -274,7 +568,7 @@ EOF
 }
 EOF
       touch index.js
-      write_readme; write_env_example; write_license
+      write_readme; write_env_example; write_license; write_ci
       ;;
 
     "TypeScript")
@@ -330,7 +624,7 @@ function main(): void {
 
 main();
 EOF
-      write_readme; write_env_example; write_license
+      write_readme; write_env_example; write_license; write_ci
       ;;
 
     "Python")
@@ -356,7 +650,7 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 EOF
-      write_readme; write_env_example; write_license
+      write_readme; write_env_example; write_license; write_ci
       ;;
 
     "Go")
@@ -368,7 +662,7 @@ bin/
 .DS_Store
 EOF
       cat > go.mod <<EOF
-module github.com/$OWNER/$PROJECT_NAME
+module $GO_MODULE
 
 go 1.22
 EOF
@@ -381,7 +675,7 @@ func main() {
 	fmt.Println("Hello, world!")
 }
 EOF
-      write_readme; write_env_example; write_license
+      write_readme; write_env_example; write_license; write_ci
       ;;
 
     "Rust")
@@ -390,8 +684,12 @@ EOF
 .env
 .DS_Store
 EOF
-      write_readme; write_env_example; write_license
-      gum style --foreground 214 "  Note: run 'cargo init .' to scaffold Rust boilerplate"
+      write_readme; write_env_example; write_license; write_ci
+      if command -v cargo &>/dev/null; then
+        cargo init . --name "$PROJECT_NAME" -q 2>/dev/null || true
+      else
+        gum style --foreground 214 "  Note: 'cargo' not found. Install Rust then run: cargo init ."
+      fi
       ;;
 
     "React / Next.js")
@@ -405,7 +703,7 @@ out/
 *.log
 .DS_Store
 EOF
-      write_readme; write_env_example; write_license
+      write_readme; write_env_example; write_license; write_ci
       gum style --foreground 214 "  Note: run 'npx create-next-app@latest .' to scaffold"
       ;;
 
@@ -420,28 +718,39 @@ EOF
   esac
 
   git add .
-  git commit -q -m "init: bootstrap $PROJECT_NAME"
+  git commit --allow-empty -m "init: bootstrap $PROJECT_NAME"
 
-  GH_ARGS=("$OWNER/$PROJECT_NAME" "--$VISIBILITY" "--source=." "--remote=origin" "--push")
-  [[ -n "$DESCRIPTION" ]] && GH_ARGS+=("--description" "$DESCRIPTION")
+  if [[ "$PUSH_TO_GITHUB" == true ]]; then
+    GH_ARGS=("$OWNER/$PROJECT_NAME" "--$VISIBILITY" "--source=." "--remote=origin" "--push")
+    [[ -n "$DESCRIPTION" ]] && GH_ARGS+=("--description" "$DESCRIPTION")
 
-  gum spin --spinner dot --title "  Creating GitHub repo..." -- \
-    gh repo create "${GH_ARGS[@]}"
+    gum spin --spinner dot --title "  Creating GitHub repo..." -- \
+      gh repo create "${GH_ARGS[@]}"
+  fi
 fi
 
-# ─── open in editor ──────────────────────────────────────────────────────────
-EDITOR_CHOICE=$(gum choose --header "  Open in editor" \
-  "VS Code" "Cursor" "Zed" "Neovim" "Skip")
+# ─── open in editor ───────────────────────────────────────────────────────────
+EDITOR_OPTIONS=()
+command -v code   &>/dev/null && EDITOR_OPTIONS+=("VS Code")
+command -v cursor &>/dev/null && EDITOR_OPTIONS+=("Cursor")
+command -v zed    &>/dev/null && EDITOR_OPTIONS+=("Zed")
+command -v nvim   &>/dev/null && EDITOR_OPTIONS+=("Neovim")
+EDITOR_OPTIONS+=("Skip")
+
+EDITOR_CHOICE=$(printf "%s\n" "${EDITOR_OPTIONS[@]}" | gum choose --header "  Open in editor")
 
 case "$EDITOR_CHOICE" in
-  "VS Code")  code "$PROJECT_PATH" ;;
+  "VS Code")  code   "$PROJECT_PATH" ;;
   "Cursor")   cursor "$PROJECT_PATH" ;;
-  "Zed")      zed "$PROJECT_PATH" ;;
-  "Neovim")   nvim "$PROJECT_PATH" ;;
+  "Zed")      zed    "$PROJECT_PATH" ;;
+  "Neovim")   nvim   "$PROJECT_PATH" ;;
 esac
 
-# ─── done ────────────────────────────────────────────────────────────────────
-REPO_URL=$(gh repo view "$OWNER/$PROJECT_NAME" --json url --jq .url 2>/dev/null || echo "")
+# ─── done ─────────────────────────────────────────────────────────────────────
+REPO_URL=""
+if [[ "$PUSH_TO_GITHUB" == true ]]; then
+  REPO_URL=$(gh repo view "$OWNER/$PROJECT_NAME" --json url --jq .url 2>/dev/null || true)
+fi
 
 echo ""
 gum style \
@@ -449,5 +758,20 @@ gum style \
   --padding "0 2" --margin "0 2" \
   "✓ $PROJECT_NAME is ready${REPO_URL:+  →  $REPO_URL}"
 echo ""
-gum style --foreground 240 "  cd $PROJECT_PATH"
+
+CD_CMD="cd $PROJECT_PATH"
+if command -v pbcopy &>/dev/null; then
+  printf "%s" "$CD_CMD" | pbcopy
+  gum style --foreground 240 "  $CD_CMD  (copied to clipboard)"
+else
+  gum style --foreground 240 "  $CD_CMD"
+fi
 echo ""
+
+# ─── save history ─────────────────────────────────────────────────────────────
+printf "%s|%s|%s|%s\n" \
+  "$PROJECT_NAME" \
+  "$PROJECT_PATH" \
+  "${REPO_URL:-}" \
+  "$(date '+%Y-%m-%d %H:%M')" \
+  >> "$HISTORY_FILE"
