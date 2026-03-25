@@ -103,6 +103,16 @@ if [[ "$STACK" != "From template →" ]]; then
 fi
 
 # ─── visibility + description ────────────────────────────────────────────────
+# ─── owner (personal or org) ─────────────────────────────────────────────────
+GITHUB_USER=$(gh api user --jq .login 2>/dev/null || echo "")
+ORGS=$(gh api user/orgs --jq '.[].login' 2>/dev/null || true)
+
+if [[ -n "$ORGS" ]]; then
+  OWNER=$(printf "%s\n%s" "$GITHUB_USER" "$ORGS" | gum choose --header "  Push to")
+else
+  OWNER="$GITHUB_USER"
+fi
+
 VISIBILITY=$(gum choose --header "  Visibility" "private" "public")
 
 DESCRIPTION=$(gum input \
@@ -118,6 +128,7 @@ gum style --foreground 240 \
   "  Stack      $STACK${TEMPLATE_REPO:+ ($TEMPLATE_REPO)}" \
   "  License    $LICENSE" \
   "  Branch     $BRANCH" \
+  "  Owner      $OWNER" \
   "  GitHub     $VISIBILITY"
 echo ""
 gum confirm "  Create project?" || { echo "  Aborted."; exit 0; }
@@ -130,7 +141,6 @@ if [[ -d "$PROJECT_PATH" ]]; then
 fi
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
-GITHUB_USER=$(gh api user --jq .login 2>/dev/null || echo "username")
 YEAR=$(date +%Y)
 LICENSE_SPDX="${LICENSE/None/UNLICENSED}"
 LICENSE_SPDX="${LICENSE_SPDX/ /-}"   # "Apache 2.0" → "Apache-2.0"
@@ -222,7 +232,7 @@ if [[ "$STACK" == "From template →" ]]; then
   mkdir -p "$PARENT_DIR"
   cd "$PARENT_DIR"
 
-  GH_ARGS=("$PROJECT_NAME" "--template" "$TEMPLATE_REPO" "--$VISIBILITY" "--clone")
+  GH_ARGS=("$OWNER/$PROJECT_NAME" "--template" "$TEMPLATE_REPO" "--$VISIBILITY" "--clone")
   [[ -n "$DESCRIPTION" ]] && GH_ARGS+=("--description" "$DESCRIPTION")
 
   gum spin --spinner dot --title "  Creating from template..." -- \
@@ -358,7 +368,7 @@ bin/
 .DS_Store
 EOF
       cat > go.mod <<EOF
-module github.com/$GITHUB_USER/$PROJECT_NAME
+module github.com/$OWNER/$PROJECT_NAME
 
 go 1.22
 EOF
@@ -412,7 +422,7 @@ EOF
   git add .
   git commit -q -m "init: bootstrap $PROJECT_NAME"
 
-  GH_ARGS=("$PROJECT_NAME" "--$VISIBILITY" "--source=." "--remote=origin" "--push")
+  GH_ARGS=("$OWNER/$PROJECT_NAME" "--$VISIBILITY" "--source=." "--remote=origin" "--push")
   [[ -n "$DESCRIPTION" ]] && GH_ARGS+=("--description" "$DESCRIPTION")
 
   gum spin --spinner dot --title "  Creating GitHub repo..." -- \
@@ -431,7 +441,7 @@ case "$EDITOR_CHOICE" in
 esac
 
 # ─── done ────────────────────────────────────────────────────────────────────
-REPO_URL=$(gh repo view "$PROJECT_NAME" --json url --jq .url 2>/dev/null || echo "")
+REPO_URL=$(gh repo view "$OWNER/$PROJECT_NAME" --json url --jq .url 2>/dev/null || echo "")
 
 echo ""
 gum style \
