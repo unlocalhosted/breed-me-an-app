@@ -12,12 +12,10 @@ bail() { echo "Error: $*" >&2; drain; exit 1; }
 # Check for gum
 command -v gum &>/dev/null || bail "gum is required. Install with: brew install gum"
 
-# Pick install dir — prefer /usr/local/bin, fall back to ~/.local/bin
+# Pick install dir — prefer /usr/local/bin if writable, else ~/.local/bin
+# (sudo won't work when piped, so we never attempt it here)
 if [[ -w /usr/local/bin ]]; then
   INSTALL_DIR="/usr/local/bin"
-elif command -v sudo &>/dev/null; then
-  INSTALL_DIR="/usr/local/bin"
-  USE_SUDO=1
 else
   INSTALL_DIR="$HOME/.local/bin"
   mkdir -p "$INSTALL_DIR"
@@ -31,11 +29,7 @@ trap 'rm -f "$TMP"' EXIT
 curl -fsSL "https://raw.githubusercontent.com/$REPO/$BRANCH/new-project" -o "$TMP" \
   || bail "Failed to download $SCRIPT_NAME. Check your internet connection."
 
-if [[ "${USE_SUDO:-0}" == "1" ]]; then
-  sudo install -m 755 "$TMP" "$INSTALL_DIR/$SCRIPT_NAME"
-else
-  install -m 755 "$TMP" "$INSTALL_DIR/$SCRIPT_NAME"
-fi
+install -m 755 "$TMP" "$INSTALL_DIR/$SCRIPT_NAME"
 
 # Warn if install dir isn't in PATH
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
