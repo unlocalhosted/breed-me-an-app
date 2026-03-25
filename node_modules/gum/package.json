@@ -1,0 +1,30 @@
+{
+  "name": "gum",
+  "id": "gum",
+  "version": "0.0.1",
+  "description": "Small method chaining library",
+  "keywords": [ "gum", "dsl", "composition", "chaining" ],
+  "author": "Irakli Gozalishvili <rfobic@gmail.com> (http://jeditoolkit.com)",
+  "homepage": "https://github.com/Gozala/gum",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Gozala/gum.git",
+    "web": "https://github.com/Gozala/gum"
+  },
+  "bugs": {
+    "url": "http://github.com/Gozala/gum/issues/"
+  },
+  "devDependencies": {
+    "test": ">=0.4.4",
+    "repl-utils": ">=1.0.0"
+  },
+  "main": "./gum.js",
+  "scripts": {
+    "test": "node test/test-all.js",
+    "repl": "node node_modules/repl-utils"
+  },
+  "licenses": [{
+    "type" : "MIT",
+    "url" : "https://github.com/Gozala/gum/License.md"
+  }]
+}

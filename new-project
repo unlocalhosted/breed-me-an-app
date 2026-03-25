@@ -1,0 +1,279 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ─── dependency check ────────────────────────────────────────────────────────
+for cmd in git gh gum; do
+  if ! command -v "$cmd" &>/dev/null; then
+    printf "error: '%s' is required but not installed.\n" "$cmd" >&2
+    [[ "$cmd" == "gum" ]] && printf "  brew install gum\n" >&2
+    exit 1
+  fi
+done
+
+# ─── header ──────────────────────────────────────────────────────────────────
+gum style \
+  --foreground 212 --border-foreground 212 --border double \
+  --align center --width 52 --margin "1 2" --padding "1 4" \
+  "◆ new-project" "Bootstrap a repo in seconds"
+
+# ─── inputs ──────────────────────────────────────────────────────────────────
+PROJECT_NAME=$(gum input \
+  --prompt "  Project name › " \
+  --placeholder "my-app")
+[[ -z "$PROJECT_NAME" ]] && gum style --foreground 196 "  Aborted: project name is required." && exit 1
+
+PARENT_DIR=$(gum input \
+  --prompt "  Parent directory › " \
+  --placeholder "$HOME/projects" \
+  --value "$HOME/")
+PARENT_DIR="${PARENT_DIR%/}"
+PROJECT_PATH="$PARENT_DIR/$PROJECT_NAME"
+
+GIT_NAME=$(gum input \
+  --prompt "  git user.name › " \
+  --placeholder "Your Name")
+
+GIT_EMAIL=$(gum input \
+  --prompt "  git user.email › " \
+  --placeholder "you@example.com")
+
+STACK=$(gum choose \
+  --header "  Tech stack" \
+  "Node.js" "TypeScript" "Python" "Go" "Rust" "React / Next.js" "Bare")
+
+VISIBILITY=$(gum choose \
+  --header "  Visibility" \
+  "private" "public")
+
+DESCRIPTION=$(gum input \
+  --prompt "  Description (optional) › " \
+  --placeholder "What does this project do?")
+
+# ─── summary + confirm ───────────────────────────────────────────────────────
+echo ""
+gum style --foreground 240 \
+  "  Project    $PROJECT_NAME" \
+  "  Path       $PROJECT_PATH" \
+  "  Identity   $GIT_NAME <$GIT_EMAIL>" \
+  "  Stack      $STACK" \
+  "  GitHub     $VISIBILITY"
+echo ""
+gum confirm "  Create project?" || { echo "  Aborted."; exit 0; }
+echo ""
+
+# ─── guard: dir must not exist ───────────────────────────────────────────────
+if [[ -d "$PROJECT_PATH" ]]; then
+  gum style --foreground 196 "  Error: '$PROJECT_PATH' already exists."
+  exit 1
+fi
+
+# ─── create dir + git init ───────────────────────────────────────────────────
+mkdir -p "$PROJECT_PATH"
+cd "$PROJECT_PATH"
+git init -q
+git config user.name  "$GIT_NAME"
+git config user.email "$GIT_EMAIL"
+
+# ─── helpers ─────────────────────────────────────────────────────────────────
+GITHUB_USER=$(gh api user --jq .login 2>/dev/null || echo "username")
+
+write_readme() {
+  cat > README.md <<EOF
+# $PROJECT_NAME
+
+${DESCRIPTION:-}
+EOF
+}
+
+# ─── boilerplate per stack ───────────────────────────────────────────────────
+case "$STACK" in
+
+  "Node.js")
+    cat > .gitignore <<'EOF'
+node_modules/
+dist/
+.env
+.env.local
+*.log
+.DS_Store
+EOF
+    cat > package.json <<EOF
+{
+  "name": "$PROJECT_NAME",
+  "version": "0.1.0",
+  "description": "$DESCRIPTION",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "license": "MIT"
+}
+EOF
+    touch index.js
+    write_readme
+    ;;
+
+  "TypeScript")
+    cat > .gitignore <<'EOF'
+node_modules/
+dist/
+.env
+.env.local
+*.log
+.DS_Store
+EOF
+    cat > package.json <<EOF
+{
+  "name": "$PROJECT_NAME",
+  "version": "0.1.0",
+  "description": "$DESCRIPTION",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "ts-node": "^10.0.0",
+    "@types/node": "^20.0.0"
+  },
+  "license": "MIT"
+}
+EOF
+    cat > tsconfig.json <<'EOF'
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "lib": ["ES2022"],
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
+}
+EOF
+    mkdir -p src
+    cat > src/index.ts <<'EOF'
+function main(): void {
+  console.log("Hello, world!");
+}
+
+main();
+EOF
+    write_readme
+    ;;
+
+  "Python")
+    cat > .gitignore <<'EOF'
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.local
+dist/
+*.egg-info/
+.pytest_cache/
+.DS_Store
+EOF
+    touch requirements.txt
+    cat > main.py <<'EOF'
+def main() -> None:
+    print("Hello, world!")
+
+
+if __name__ == "__main__":
+    main()
+EOF
+    write_readme
+    ;;
+
+  "Go")
+    cat > .gitignore <<'EOF'
+bin/
+*.exe
+*.test
+.env
+.DS_Store
+EOF
+    cat > go.mod <<EOF
+module github.com/$GITHUB_USER/$PROJECT_NAME
+
+go 1.22
+EOF
+    cat > main.go <<'EOF'
+package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("Hello, world!")
+}
+EOF
+    write_readme
+    ;;
+
+  "Rust")
+    cat > .gitignore <<'EOF'
+/target
+.env
+.DS_Store
+EOF
+    write_readme
+    gum style --foreground 214 "  Note: run 'cargo init .' to scaffold Rust boilerplate"
+    ;;
+
+  "React / Next.js")
+    cat > .gitignore <<'EOF'
+node_modules/
+.next/
+out/
+.env
+.env.local
+.env*.local
+*.log
+.DS_Store
+EOF
+    write_readme
+    gum style --foreground 214 "  Note: run 'npx create-next-app@latest .' to scaffold"
+    ;;
+
+  "Bare")
+    cat > .gitignore <<'EOF'
+.env
+.env.local
+.DS_Store
+EOF
+    write_readme
+    ;;
+esac
+
+# ─── initial commit ──────────────────────────────────────────────────────────
+git add .
+git commit -q -m "init: bootstrap $PROJECT_NAME"
+
+# ─── create github repo + push ───────────────────────────────────────────────
+GH_ARGS=("$PROJECT_NAME" "--$VISIBILITY" "--source=." "--remote=origin" "--push")
+[[ -n "$DESCRIPTION" ]] && GH_ARGS+=("--description" "$DESCRIPTION")
+
+gum spin --spinner dot --title "  Creating GitHub repo..." -- \
+  gh repo create "${GH_ARGS[@]}"
+
+# ─── done ────────────────────────────────────────────────────────────────────
+REPO_URL=$(gh repo view "$PROJECT_NAME" --json url --jq .url 2>/dev/null || echo "")
+
+echo ""
+gum style \
+  --foreground 82 --border-foreground 82 --border rounded \
+  --padding "0 2" --margin "0 2" \
+  "✓ $PROJECT_NAME is ready${REPO_URL:+  →  $REPO_URL}"
+echo ""
+gum style --foreground 240 "  cd $PROJECT_PATH"
+echo ""
