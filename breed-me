@@ -151,6 +151,16 @@ PROJECT_NAME=$(printf "%s" "$PROJECT_NAME_RAW" \
   | tr ' _' '-' \
   | tr -cd 'a-z0-9-')
 
+# strip leading/trailing hyphens (e.g. "--my-app" → "my-app")
+PROJECT_NAME="${PROJECT_NAME#"${PROJECT_NAME%%[!-]*}"}"
+PROJECT_NAME="${PROJECT_NAME%"${PROJECT_NAME##*[!-]}"}"
+
+# enforce GitHub's 100-char repo name limit
+if [[ ${#PROJECT_NAME} -gt 100 ]]; then
+  PROJECT_NAME="${PROJECT_NAME:0:100}"
+  PROJECT_NAME="${PROJECT_NAME%%-}"   # don't end on a hyphen after truncation
+fi
+
 if [[ "$PROJECT_NAME" != "$PROJECT_NAME_RAW" ]]; then
   gum style --foreground 214 "  Name normalized: $PROJECT_NAME_RAW → $PROJECT_NAME"
 fi
@@ -166,7 +176,8 @@ fi
 
 PARENT_DIR=$(gum file --directory --file=false \
   --header "  Parent directory" \
-  "$DEFAULT_DIR")
+  "$DEFAULT_DIR") || { gum style --foreground 196 "  Aborted."; exit 1; }
+[[ -z "$PARENT_DIR" ]] && gum style --foreground 196 "  Aborted: no directory selected." && exit 1
 PARENT_DIR="${PARENT_DIR%/}"
 printf "%s\n" "$PARENT_DIR" > "$LAST_DIR_FILE"
 
@@ -175,14 +186,16 @@ PROJECT_PATH="$PARENT_DIR/$PROJECT_NAME"
 # ─── identity: saved profiles ─────────────────────────────────────────────────
 save_profile() {
   local label="${1//|/}" name="$2" email="$3"
-  grep -v "^${label}|" "$PROFILES_FILE" > "${PROFILES_FILE}.tmp" 2>/dev/null || true
+  # use awk for exact field match — grep regex would misinterpret label chars like . * [
+  awk -F'|' -v l="$label" '$1 != l' "$PROFILES_FILE" > "${PROFILES_FILE}.tmp" 2>/dev/null || true
   mv "${PROFILES_FILE}.tmp" "$PROFILES_FILE" 2>/dev/null || true
   printf "%s|%s|%s\n" "$label" "$name" "$email" >> "$PROFILES_FILE"
 }
 
 load_profile() {
   local label="$1" line
-  line=$(grep "^${label}|" "$PROFILES_FILE")
+  # awk exits 0 even on no match, avoiding set -e issues with grep's exit 1
+  line=$(awk -F'|' -v l="$label" '$1 == l {print; exit}' "$PROFILES_FILE" 2>/dev/null || true)
   GIT_NAME=$(cut -d'|' -f2 <<< "$line")
   GIT_EMAIL=$(cut -d'|' -f3 <<< "$line")
 }
@@ -211,6 +224,9 @@ else
   PROFILE_LABEL="${PROFILE_LABEL//|/}"
   [[ -n "$PROFILE_LABEL" ]] && save_profile "$PROFILE_LABEL" "$GIT_NAME" "$GIT_EMAIL"
 fi
+
+[[ -z "$GIT_NAME" ]]  && gum style --foreground 196 "  Name is required." && exit 1
+[[ -z "$GIT_EMAIL" ]] && gum style --foreground 196 "  Email is required." && exit 1
 
 # ─── stack ────────────────────────────────────────────────────────────────────
 STACK_OPTIONS=("Node.js" "TypeScript" "Python" "Go" "Rust" "React / Next.js" "Bare")
@@ -322,6 +338,9 @@ fi
 YEAR=$(date +%Y)
 LICENSE_SPDX="${LICENSE/None/UNLICENSED}"
 LICENSE_SPDX="${LICENSE_SPDX/ /-}"
+# JSON-safe description: escape backslashes then double quotes
+JSON_DESCRIPTION="${DESCRIPTION//\\/\\\\}"
+JSON_DESCRIPTION="${JSON_DESCRIPTION//\"/\\\"}"
 
 write_readme() {
   cat > README.md <<EOF
@@ -543,7 +562,10 @@ if [[ "$STACK" == "From template →" ]]; then
 
 # ─── standard flow ────────────────────────────────────────────────────────────
 else
-  mkdir -p "$PROJECT_PATH"
+  mkdir -p "$PROJECT_PATH" || {
+    gum style --foreground 196 "  Error: cannot create '$PROJECT_PATH'. Check permissions."
+    exit 1
+  }
   cd "$PROJECT_PATH"
   git init -q -b "$BRANCH"
   git config user.name  "$GIT_NAME"
@@ -566,7 +588,7 @@ EOF
 {
   "name": "$PROJECT_NAME",
   "version": "0.1.0",
-  "description": "$DESCRIPTION",
+  "description": "$JSON_DESCRIPTION",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -591,7 +613,7 @@ EOF
 {
   "name": "$PROJECT_NAME",
   "version": "0.1.0",
-  "description": "$DESCRIPTION",
+  "description": "$JSON_DESCRIPTION",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
@@ -731,8 +753,13 @@ EOF
     GH_ARGS=("$OWNER/$PROJECT_NAME" "--$VISIBILITY" "--source=." "--remote=origin" "--push")
     [[ -n "$DESCRIPTION" ]] && GH_ARGS+=("--description" "$DESCRIPTION")
 
-    gum spin --spinner dot --title "  Creating GitHub repo..." -- \
-      gh repo create "${GH_ARGS[@]}"
+    if ! gum spin --spinner dot --title "  Creating GitHub repo..." -- \
+        gh repo create "${GH_ARGS[@]}"; then
+      gum style --foreground 196 \
+        "  GitHub repo creation failed. Your local repo is intact." \
+        "  To retry: gh repo create $OWNER/$PROJECT_NAME --source=$PROJECT_PATH --push"
+      PUSH_TO_GITHUB=false   # skip repo URL lookup below
+    fi
   fi
 fi
 
