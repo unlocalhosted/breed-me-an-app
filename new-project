@@ -44,7 +44,14 @@ do_update() {
   curl -fsSL --max-time 30 \
     "https://raw.githubusercontent.com/$SELF_REPO/main/new-project" \
     -o "$tmp" || { printf "error: download failed\n" >&2; exit 1; }
-  install -m 755 "$tmp" "$SELF_PATH"
+  if [[ -w "$SELF_PATH" ]]; then
+    install -m 755 "$tmp" "$SELF_PATH"
+  elif command -v sudo &>/dev/null; then
+    sudo install -m 755 "$tmp" "$SELF_PATH"
+  else
+    printf "error: cannot write to %s\n  Try: sudo new-project --update\n" "$SELF_PATH" >&2
+    exit 1
+  fi
   printf "Done. You are on the latest version.\n"
   exit 0
 }
