@@ -23,7 +23,7 @@ cleanup() {
   # Remove partially-scaffolded project on interrupt
   if [[ "$EXECUTION_STARTED" == true && -n "$PROJECT_PATH" && -d "$PROJECT_PATH" ]]; then
     rm -rf "$PROJECT_PATH" 2>/dev/null || true
-    printf "\n  Cleaned up partial directory: %s\n" "$PROJECT_PATH" >&2
+    printf "\n  Stillborn — cleaned up partial directory: %s\n" "$PROJECT_PATH" >&2
   fi
 }
 trap cleanup EXIT INT TERM
@@ -88,12 +88,12 @@ show_header() {
 show_help() {
   printf "Usage: breed-me [SUBCOMMAND] [OPTIONS]\n\n"
   printf "Subcommands:\n"
-  printf "  list        Show previously created projects\n"
-  printf "  profiles    Manage saved identity profiles\n\n"
+  printf "  list        Show your offspring\n"
+  printf "  profiles    Manage saved DNA profiles\n\n"
   printf "Options:\n"
-  printf "  --local     Skip all GitHub steps (no gh required)\n"
-  printf "  --dry-run   Preview inputs without creating anything\n"
-  printf "  --update    Update to the latest version\n"
+  printf "  --local     Breed locally (no GitHub, no gh required)\n"
+  printf "  --dry-run   Preview the litter without breeding anything\n"
+  printf "  --update    Evolve to the latest version\n"
   printf "  --version   Show version\n"
   printf "  -h, --help  Show this help\n"
 }
@@ -102,7 +102,7 @@ show_help() {
 do_update() {
   local tmp
   tmp=$(mktemp); TMPFILES+=("$tmp")
-  printf "Updating breed-me...\n"
+  printf "Evolving breed-me...\n"
   curl -fsSL --max-time 30 \
     "https://raw.githubusercontent.com/$SELF_REPO/main/breed-me" \
     -o "$tmp" || { printf "error: download failed\n" >&2; exit 1; }
@@ -114,7 +114,7 @@ do_update() {
     printf "error: cannot write to %s\n  Try: sudo breed-me --update\n" "$SELF_PATH" >&2
     exit 1
   fi
-  printf "Done. You are on the latest version.\n"
+  printf "Done. You've reached peak evolution.\n"
   exit 0
 }
 
@@ -167,7 +167,7 @@ fi
 # ─── list subcommand ──────────────────────────────────────────────────────────
 if [[ "$SUBCOMMAND" == "list" ]]; then
   if [[ ! -f "$HISTORY_FILE" ]] || [[ ! -s "$HISTORY_FILE" ]]; then
-    gum style --foreground 240 "  No projects yet."
+    gum style --foreground 240 "  No offspring yet."
     exit 0
   fi
   echo ""
@@ -185,7 +185,7 @@ fi
 # ─── profiles subcommand ─────────────────────────────────────────────────────
 if [[ "$SUBCOMMAND" == "profiles" ]]; then
   if [[ ! -f "$PROFILES_FILE" ]] || [[ ! -s "$PROFILES_FILE" ]]; then
-    gum style --foreground 240 "  No profiles saved yet. Create one during your first breed-me run."
+    gum style --foreground 240 "  No DNA on file yet. Supply yours during your first breed-me run."
     exit 0
   fi
   echo ""
@@ -197,13 +197,13 @@ if [[ "$SUBCOMMAND" == "profiles" ]]; then
     echo ""
   done < "$PROFILES_FILE"
 
-  ACTION=$(printf "Done\nDelete a profile\n" | gum choose --header "  Action" --height 4)
-  if [[ "$ACTION" == "Delete a profile" ]]; then
-    DEL_LABEL=$(cut -d'|' -f1 "$PROFILES_FILE" | gum choose --header "  Delete which profile?" --height 8)
+  ACTION=$(printf "Done\nPurge a DNA profile\n" | gum choose --header "  Action" --height 4)
+  if [[ "$ACTION" == "Purge a DNA profile" ]]; then
+    DEL_LABEL=$(cut -d'|' -f1 "$PROFILES_FILE" | gum choose --header "  Purge whose DNA?" --height 8)
     if [[ -n "$DEL_LABEL" ]]; then
       awk -F'|' -v l="$DEL_LABEL" '$1 != l' "$PROFILES_FILE" > "${PROFILES_FILE}.tmp" 2>/dev/null || true
       mv "${PROFILES_FILE}.tmp" "$PROFILES_FILE" 2>/dev/null || true
-      gum style --foreground 82 "  ✓ Deleted profile: $DEL_LABEL"
+      gum style --foreground 82 "  ✓ Purged DNA: $DEL_LABEL"
     fi
   fi
   exit 0
@@ -217,7 +217,7 @@ if [[ "$FLAG_LOCAL" == false ]]; then
   PREFETCH_USER=$(mktemp); TMPFILES+=("$PREFETCH_USER")
   PREFETCH_ORGS=$(mktemp); TMPFILES+=("$PREFETCH_ORGS")
 
-  gum spin --spinner dot --title "  Connecting to GitHub..." -- \
+  gum spin --spinner dot --title "  Sniffing out GitHub..." -- \
     bash -c '
       safe_timeout() {
         if command -v timeout &>/dev/null; then timeout "$@"
@@ -236,8 +236,8 @@ if [[ "$FLAG_LOCAL" == false ]]; then
 
   if [[ -z "$GITHUB_USER" ]]; then
     gum style --foreground 196 \
-      "  ✗ GitHub auth failed. Run: gh auth login" \
-      "  Or use --local to skip GitHub."
+      "  ✗ GitHub won't let us in. Run: gh auth login" \
+      "  Or breed locally with --local."
     exit 4
   fi
 fi
@@ -248,25 +248,25 @@ if [[ ! -f "$HISTORY_FILE" ]] && [[ ! -f "$PROFILES_FILE" ]]; then
   gum style \
     --foreground 212 --border-foreground 212 --border rounded \
     --padding "0 2" --margin "0 2" \
-    "◆ Welcome to breed-me" \
+    "◆ Welcome to the breed-me kennel" \
     "" \
-    "  This wizard walks you through creating a new project in 4 steps:" \
-    "  project name & stack → GitHub → identity → details" \
+    "  Pick the traits, supply the DNA, and we'll breed your app in 4 steps:" \
+    "  traits & stack → habitat → DNA → pedigree" \
     "" \
-    "  Your choices are saved as profiles for next time." \
-    "  Run breed-me --dry-run to preview without creating anything."
+    "  Your DNA is saved as profiles for next time." \
+    "  Run breed-me --dry-run to preview the litter without breeding anything."
   echo ""
-  gum confirm "  Ready?" || { echo ""; gum style --foreground 240 "  Aborted."; echo ""; exit 3; }
+  gum confirm "  Ready to breed?" || { echo ""; gum style --foreground 240 "  Litter abandoned."; echo ""; exit 3; }
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PHASE 1 — PROJECT
 # ═══════════════════════════════════════════════════════════════════════════════
 
-show_header "Project  ·  1 of 4"
+show_header "Traits  ·  1 of 4"
 
 # ─── project name ─────────────────────────────────────────────────────────────
-PROJECT_NAME_RAW=$(gum input --prompt "  Name › " --placeholder "my-app")
+PROJECT_NAME_RAW=$(gum input --prompt "  Name your offspring › " --placeholder "my-app")
 [[ -z "$PROJECT_NAME_RAW" ]] && die "project name is required — try: my-app"
 
 PROJECT_NAME=$(printf "%s" "$PROJECT_NAME_RAW" \
@@ -289,24 +289,24 @@ fi
 [[ -z "$PROJECT_NAME" ]] && \
   die "\"$PROJECT_NAME_RAW\" has no valid characters — try: my-app"
 
-add_progress "project" "$PROJECT_NAME"
+add_progress "offspring" "$PROJECT_NAME"
 
 # ─── stack ────────────────────────────────────────────────────────────────────
-show_header "Project  ·  1 of 4"
+show_header "Traits  ·  1 of 4"
 
 STACK_OPTIONS=("Node.js" "TypeScript" "Python" "Go" "Rust" "React (Vite)" "Next.js" "Swift Library" "Swift iOS" "Swift macOS" "Swift macOS Launcher" "Bare")
 [[ "$FLAG_LOCAL" == false ]] && STACK_OPTIONS+=("From template →")
 
-STACK=$(printf "%s\n" "${STACK_OPTIONS[@]}" | gum choose --header "  Stack" --height 15)
-add_progress "stack" "$STACK"
+STACK=$(printf "%s\n" "${STACK_OPTIONS[@]}" | gum choose --header "  Bloodline" --height 15)
+add_progress "bloodline" "$STACK"
 
 # ─── template repo ────────────────────────────────────────────────────────────
 TEMPLATE_REPO=""
 if [[ "$STACK" == "From template →" ]]; then
-  show_header "Project  ·  1 of 4"
+  show_header "Traits  ·  1 of 4"
   TEMPLATE_REPO=$(gum input --prompt "  GitHub template › " --placeholder "owner/repo")
   [[ -z "$TEMPLATE_REPO" ]] && die "template repo is required — try: owner/repo"
-  add_progress "template" "$TEMPLATE_REPO"
+  add_progress "gene pool" "$TEMPLATE_REPO"
 fi
 
 # ─── js/ts dep checks ─────────────────────────────────────────────────────────
@@ -368,46 +368,46 @@ OWNER="${GITHUB_USER}"
 VISIBILITY="private"
 DESCRIPTION=""
 
-show_header "GitHub  ·  2 of 4"
+show_header "Habitat  ·  2 of 4"
 
 if [[ "$FLAG_LOCAL" == true ]]; then
-  add_progress "github" "local only"
+  add_progress "habitat" "local only"
 elif [[ "$STACK" == "From template →" ]]; then
   # template always pushes to GitHub
   PUSH_TO_GITHUB=true
   if [[ -n "$GITHUB_ORGS" ]]; then
-    OWNER=$(printf "%s\n%s\n" "$GITHUB_USER" "$GITHUB_ORGS" | gum choose --header "  Owner" --height 8)
-    add_progress "owner" "$OWNER"
-    show_header "GitHub  ·  2 of 4"
+    OWNER=$(printf "%s\n%s\n" "$GITHUB_USER" "$GITHUB_ORGS" | gum choose --header "  Keeper" --height 8)
+    add_progress "keeper" "$OWNER"
+    show_header "Habitat  ·  2 of 4"
   fi
   VISIBILITY=$(gum choose --header "  Visibility" --height 4 "private" "public")
-  add_progress "github" "$OWNER / $VISIBILITY"
+  add_progress "habitat" "$OWNER / $VISIBILITY"
 else
   gum confirm "  Push to GitHub?" && PUSH_TO_GITHUB=true || true
 
   if [[ "$PUSH_TO_GITHUB" == true ]]; then
     if [[ -n "$GITHUB_ORGS" ]]; then
-      show_header "GitHub  ·  2 of 4"
-      OWNER=$(printf "%s\n%s\n" "$GITHUB_USER" "$GITHUB_ORGS" | gum choose --header "  Owner" --height 8)
-      add_progress "owner" "$OWNER"
+      show_header "Habitat  ·  2 of 4"
+      OWNER=$(printf "%s\n%s\n" "$GITHUB_USER" "$GITHUB_ORGS" | gum choose --header "  Keeper" --height 8)
+      add_progress "keeper" "$OWNER"
     fi
-    show_header "GitHub  ·  2 of 4"
+    show_header "Habitat  ·  2 of 4"
     VISIBILITY=$(gum choose --header "  Visibility" --height 4 "private" "public")
-    add_progress "github" "$OWNER / $VISIBILITY"
+    add_progress "habitat" "$OWNER / $VISIBILITY"
   else
-    add_progress "github" "local only"
+    add_progress "habitat" "local only"
   fi
 fi
 
-show_header "GitHub  ·  2 of 4"
-DESCRIPTION=$(gum input --prompt "  Description (optional) › " --placeholder "What does this project do?")
+show_header "Habitat  ·  2 of 4"
+DESCRIPTION=$(gum input --prompt "  Description (optional) › " --placeholder "What will this creature do?")
 [[ -n "$DESCRIPTION" ]] && add_progress "description" "$DESCRIPTION"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PHASE 3 — IDENTITY
 # ═══════════════════════════════════════════════════════════════════════════════
 
-show_header "Identity  ·  3 of 4"
+show_header "DNA  ·  3 of 4"
 
 save_profile() {
   local label="${1//|/}" name="$2" email="$3"
@@ -428,15 +428,15 @@ GIT_EMAIL=""
 
 if [[ -f "$PROFILES_FILE" ]] && [[ -s "$PROFILES_FILE" ]]; then
   PROFILE_CHOICE=$(
-    { cut -d'|' -f1 "$PROFILES_FILE"; printf "+ New profile\n"; } \
-    | gum choose --header "  Identity" --height 8
+    { cut -d'|' -f1 "$PROFILES_FILE"; printf "+ New DNA\n"; } \
+    | gum choose --header "  Whose DNA?" --height 8
   )
-  if [[ "$PROFILE_CHOICE" == "+ New profile" ]]; then
-    show_header "Identity  ·  3 of 4"
+  if [[ "$PROFILE_CHOICE" == "+ New DNA" ]]; then
+    show_header "DNA  ·  3 of 4"
     GIT_NAME=$(gum input --prompt "  git user.name › " --placeholder "Your Name")
-    show_header "Identity  ·  3 of 4"
+    show_header "DNA  ·  3 of 4"
     GIT_EMAIL=$(gum input --prompt "  git user.email › " --placeholder "you@example.com")
-    show_header "Identity  ·  3 of 4"
+    show_header "DNA  ·  3 of 4"
     PROFILE_LABEL=$(gum input --prompt "  Save as (optional) › " --placeholder "work / personal")
     PROFILE_LABEL="${PROFILE_LABEL//|/}"
     [[ -n "$PROFILE_LABEL" ]] && save_profile "$PROFILE_LABEL" "$GIT_NAME" "$GIT_EMAIL"
@@ -445,9 +445,9 @@ if [[ -f "$PROFILES_FILE" ]] && [[ -s "$PROFILES_FILE" ]]; then
   fi
 else
   GIT_NAME=$(gum input --prompt "  git user.name › " --placeholder "Your Name")
-  show_header "Identity  ·  3 of 4"
+  show_header "DNA  ·  3 of 4"
   GIT_EMAIL=$(gum input --prompt "  git user.email › " --placeholder "you@example.com")
-  show_header "Identity  ·  3 of 4"
+  show_header "DNA  ·  3 of 4"
   PROFILE_LABEL=$(gum input --prompt "  Save as (optional) › " --placeholder "work / personal")
   PROFILE_LABEL="${PROFILE_LABEL//|/}"
   [[ -n "$PROFILE_LABEL" ]] && save_profile "$PROFILE_LABEL" "$GIT_NAME" "$GIT_EMAIL"
@@ -455,13 +455,13 @@ fi
 
 [[ -z "$GIT_NAME" ]]  && die "git user.name is required"
 [[ -z "$GIT_EMAIL" ]] && die "git user.email is required"
-add_progress "identity" "$GIT_NAME <$GIT_EMAIL>"
+add_progress "DNA" "$GIT_NAME <$GIT_EMAIL>"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PHASE 4 — DETAILS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-show_header "Details  ·  4 of 4"
+show_header "Pedigree  ·  4 of 4"
 
 # ─── license ──────────────────────────────────────────────────────────────────
 LICENSE="None"
@@ -472,7 +472,7 @@ fi
 
 # ─── branch name ──────────────────────────────────────────────────────────────
 while true; do
-  show_header "Details  ·  4 of 4"
+  show_header "Pedigree  ·  4 of 4"
   BRANCH=$(gum input --prompt "  Default branch › " --value "main")
   BRANCH="${BRANCH:-main}"
   if [[ "$BRANCH" =~ \.\. ]] \
@@ -488,7 +488,7 @@ add_progress "branch" "$BRANCH"
 # ─── .env.example ─────────────────────────────────────────────────────────────
 ADD_ENV=false
 if [[ "$STACK" != "From template →" && ! "$STACK" =~ ^Swift ]]; then
-  show_header "Details  ·  4 of 4"
+  show_header "Pedigree  ·  4 of 4"
   gum style --foreground 240 "  Creates .env.example as a template for environment variables."
   echo ""
   gum confirm "  Add .env.example?" && ADD_ENV=true || true
@@ -498,7 +498,7 @@ fi
 # ─── github actions ci ────────────────────────────────────────────────────────
 ADD_CI=false
 if [[ "$STACK" != "From template →" ]] && [[ "$STACK" != "Bare" ]]; then
-  show_header "Details  ·  4 of 4"
+  show_header "Pedigree  ·  4 of 4"
   gum style --foreground 240 "  Writes .github/workflows/ci.yml — build + test on push and PR."
   echo ""
   gum confirm "  Add GitHub Actions CI?" && ADD_CI=true || true
@@ -507,7 +507,7 @@ fi
 
 # ─── swiftlint advisory ───────────────────────────────────────────────────────
 if [[ "$STACK" =~ ^Swift ]] && ! command -v swiftlint &>/dev/null; then
-  show_header "Details  ·  4 of 4"
+  show_header "Pedigree  ·  4 of 4"
   note "swiftlint not found — .swiftlint.yml will be written but linting"
   note "won't run in CI until you install it: brew install swiftlint"
   echo ""
@@ -520,22 +520,25 @@ if [[ -f "$LAST_DIR_FILE" ]]; then
   [[ -d "$SAVED_DIR" ]] && DEFAULT_DIR="$SAVED_DIR"
 fi
 
-show_header "Details  ·  4 of 4"
+show_header "Pedigree  ·  4 of 4"
+gum style --foreground 240 "  Where should $PROJECT_NAME live? Pick a parent folder."
+echo ""
 PARENT_DIR=$(gum file --directory --file=false \
-  --header "  Parent directory" \
+  --height 8 --show-help \
+  --header "  Nesting ground  (enter = select · esc = cancel)" \
   "$DEFAULT_DIR") || die "no directory selected"
 [[ -z "$PARENT_DIR" ]] && die "no directory selected"
 PARENT_DIR="${PARENT_DIR%/}"
 printf "%s\n" "$PARENT_DIR" > "${LAST_DIR_FILE}.tmp" && mv "${LAST_DIR_FILE}.tmp" "$LAST_DIR_FILE"
 
 PROJECT_PATH="$PARENT_DIR/$PROJECT_NAME"
-add_progress "path" "$PROJECT_PATH"
+add_progress "nest" "$PROJECT_PATH"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # READY
 # ═══════════════════════════════════════════════════════════════════════════════
 
-show_header "Ready"
+show_header "Ready to breed"
 
 # Enhanced summary with borders for the confirmation screen
 gum style --border rounded --border-foreground 212 \
@@ -546,17 +549,17 @@ echo ""
 if [[ "$FLAG_DRY_RUN" == true ]]; then
   gum style --foreground 214 --border rounded --border-foreground 214 \
     --padding "0 2" --margin "0 2" \
-    "--dry-run: nothing was created."
+    "--dry-run: no offspring were harmed."
   echo ""
   exit 0
 fi
 
-gum confirm "  Breed it?" || { echo ""; gum style --foreground 240 "  Aborted."; echo ""; exit 3; }
+gum confirm "  Breed it?" || { echo ""; gum style --foreground 240 "  Litter abandoned."; echo ""; exit 3; }
 echo ""
 
 # ─── guard ────────────────────────────────────────────────────────────────────
 if [[ -d "$PROJECT_PATH" ]]; then
-  die "'$PROJECT_PATH' already exists — pick a different name or directory"
+  die "'$PROJECT_PATH' already lives here — pick a different name or directory"
 fi
 
 # ─── write helpers ────────────────────────────────────────────────────────────
@@ -1020,9 +1023,9 @@ if [[ "$STACK" == "From template →" ]]; then
   GH_ARGS=("$OWNER/$PROJECT_NAME" "--template" "$TEMPLATE_REPO" "--$VISIBILITY" "--clone")
   [[ -n "$DESCRIPTION" ]] && GH_ARGS+=("--description" "$DESCRIPTION")
 
-  if ! gum spin --spinner dot --title "  Creating from template..." -- \
+  if ! gum spin --spinner dot --title "  Cloning from the gene pool..." -- \
       gh repo create "${GH_ARGS[@]}"; then
-    die "Template creation failed. Check the template repo name and your permissions." \
+    die "Cloning failed — bad genes? Check the template repo name and your permissions." \
         "  To retry: gh repo create $OWNER/$PROJECT_NAME --template $TEMPLATE_REPO --$VISIBILITY --clone"
   fi
 
@@ -1191,7 +1194,7 @@ describe('main', () => {
 })
 EOF
       write_readme; write_env_example; write_license; write_ci
-      gum spin --spinner dot --title "  Installing dependencies..." -- \
+      gum spin --spinner dot --title "  Feeding the newborn..." -- \
         pnpm install --silent 2>/dev/null || \
         warn "pnpm install failed — run manually: pnpm install"
       ;;
@@ -1440,10 +1443,10 @@ EOF
 import '@testing-library/jest-dom'
 EOF
       write_readme; write_env_example; write_license; write_ci
-      gum spin --spinner dot --title "  Installing dependencies..." -- \
+      gum spin --spinner dot --title "  Feeding the newborn..." -- \
         pnpm install --silent 2>/dev/null || \
         warn "pnpm install failed — run manually: pnpm install"
-      gum spin --spinner dot --title "  Initializing react-grab..." -- \
+      gum spin --spinner dot --title "  Splicing in react-grab..." -- \
         pnpm dlx grab@latest init 2>/dev/null || \
         warn "react-grab: run manually: pnpm dlx grab@latest init"
       ;;
@@ -1451,7 +1454,7 @@ EOF
     "Next.js")
       # create-next-app writes its own .gitignore and README — don't write ours first
       write_env_example; write_license; write_ci
-      gum spin --spinner dot --title "  Scaffolding Next.js (this takes a moment)..." -- \
+      gum spin --spinner dot --title "  Gestating Next.js (this takes a moment)..." -- \
         pnpm dlx create-next-app@latest . \
           --yes --ts --tailwind --no-linter \
           --app --src-dir --use-pnpm --skip-install \
@@ -1526,10 +1529,10 @@ pkg.devDependencies = {
 }
 fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n')
 JSEOF
-      gum spin --spinner dot --title "  Installing dependencies..." -- \
+      gum spin --spinner dot --title "  Feeding the newborn..." -- \
         pnpm install --silent 2>/dev/null || \
         warn "pnpm install failed — run manually: pnpm install"
-      gum spin --spinner dot --title "  Initializing react-grab..." -- \
+      gum spin --spinner dot --title "  Splicing in react-grab..." -- \
         pnpm dlx grab@latest init 2>/dev/null || \
         warn "react-grab: run manually: pnpm dlx grab@latest init"
       ;;
@@ -1700,10 +1703,10 @@ struct ContentViewTests {
 }
 EOF
       write_swiftlint; write_readme; write_license; write_ci
-      gum spin --spinner dot --title "  Installing Tuist dependencies..." -- \
+      gum spin --spinner dot --title "  Nursing Tuist dependencies..." -- \
         tuist install 2>/dev/null || \
         warn "tuist install failed — run manually: tuist install"
-      gum spin --spinner dot --title "  Generating Xcode project..." -- \
+      gum spin --spinner dot --title "  Hatching Xcode project..." -- \
         tuist generate --no-open 2>/dev/null || \
         warn "tuist generate failed — run manually: tuist generate"
       ;;
@@ -1807,10 +1810,10 @@ struct ContentViewTests {
 }
 EOF
       write_swiftlint; write_readme; write_license; write_ci
-      gum spin --spinner dot --title "  Installing Tuist dependencies..." -- \
+      gum spin --spinner dot --title "  Nursing Tuist dependencies..." -- \
         tuist install 2>/dev/null || \
         warn "tuist install failed — run manually: tuist install"
-      gum spin --spinner dot --title "  Generating Xcode project..." -- \
+      gum spin --spinner dot --title "  Hatching Xcode project..." -- \
         tuist generate --no-open 2>/dev/null || \
         warn "tuist generate failed — run manually: tuist generate"
       ;;
@@ -2004,10 +2007,10 @@ struct LauncherPanelTests {
 }
 EOF
       write_swiftlint; write_readme; write_license; write_ci
-      gum spin --spinner dot --title "  Installing Tuist dependencies..." -- \
+      gum spin --spinner dot --title "  Nursing Tuist dependencies..." -- \
         tuist install 2>/dev/null || \
         warn "tuist install failed — run manually: tuist install"
-      gum spin --spinner dot --title "  Generating Xcode project..." -- \
+      gum spin --spinner dot --title "  Hatching Xcode project..." -- \
         tuist generate --no-open 2>/dev/null || \
         warn "tuist generate failed — run manually: tuist generate"
       ;;
@@ -2021,9 +2024,9 @@ EOF
     GH_ARGS=("$OWNER/$PROJECT_NAME" "--$VISIBILITY" "--source=." "--remote=origin" "--push")
     [[ -n "$DESCRIPTION" ]] && GH_ARGS+=("--description" "$DESCRIPTION")
 
-    if ! gum spin --spinner dot --title "  Creating GitHub repo..." -- \
+    if ! gum spin --spinner dot --title "  Releasing into the wild (GitHub)..." -- \
         gh repo create "${GH_ARGS[@]}"; then
-      PENDING_WARNINGS+=("GitHub repo creation failed. Your local repo is intact.")
+      PENDING_WARNINGS+=("Couldn't release to GitHub. Your offspring is safe locally.")
       PENDING_WARNINGS+=("If repo exists: cd \"$PROJECT_PATH\" && git push -u origin $BRANCH")
       PENDING_WARNINGS+=("If not: gh repo create $OWNER/$PROJECT_NAME --source=$PROJECT_PATH --push")
       PUSH_TO_GITHUB=false
@@ -2040,7 +2043,7 @@ command -v nvim   &>/dev/null && EDITOR_OPTIONS+=("Neovim")
 EDITOR_OPTIONS+=("Skip")
 
 clear
-EDITOR_CHOICE=$(printf "%s\n" "${EDITOR_OPTIONS[@]}" | gum choose --header "  Open in editor" --height 6)
+EDITOR_CHOICE=$(printf "%s\n" "${EDITOR_OPTIONS[@]}" | gum choose --header "  Incubate in" --height 6)
 
 case "$EDITOR_CHOICE" in
   "VS Code")  code   "$PROJECT_PATH" ;;
@@ -2060,7 +2063,7 @@ echo ""
 gum style \
   --foreground 82 --border-foreground 82 --border rounded \
   --padding "0 2" --margin "0 2" \
-  "✓ $PROJECT_NAME is ready${REPO_URL:+  →  $REPO_URL}"
+  "✓ $PROJECT_NAME has been born${REPO_URL:+  →  $REPO_URL}"
 echo ""
 
 # Show any warnings that were buffered during execution
@@ -2094,20 +2097,20 @@ echo ""
 case "$STACK" in
   "Node.js")
     gum style --foreground 240 \
-      "  Next steps:" \
+      "  Raise your newborn:" \
       "    npm run dev      start with --watch" \
       "    npm test         run tests"
     ;;
   "TypeScript")
     gum style --foreground 240 \
-      "  Next steps:" \
+      "  Raise your newborn:" \
       "    pnpm dev         start with bun --watch" \
       "    pnpm test        run tests" \
       "    pnpm lint        check code style"
     ;;
   "Python")
     gum style --foreground 240 \
-      "  Next steps:" \
+      "  Raise your newborn:" \
       "    python -m venv .venv && source .venv/bin/activate" \
       "    pip install -r requirements.txt" \
       "    python main.py   run the app" \
@@ -2115,39 +2118,39 @@ case "$STACK" in
     ;;
   "Go")
     gum style --foreground 240 \
-      "  Next steps:" \
+      "  Raise your newborn:" \
       "    go run .          run the app" \
       "    go test ./...     run tests"
     ;;
   "Rust")
     gum style --foreground 240 \
-      "  Next steps:" \
+      "  Raise your newborn:" \
       "    cargo run         run the app" \
       "    cargo test        run tests"
     ;;
   "React (Vite)")
     gum style --foreground 240 \
-      "  Next steps:" \
+      "  Raise your newborn:" \
       "    pnpm dev         start dev server" \
       "    pnpm test        run tests" \
       "    pnpm lint        check code style"
     ;;
   "Next.js")
     gum style --foreground 240 \
-      "  Next steps:" \
+      "  Raise your newborn:" \
       "    pnpm dev         start dev server" \
       "    pnpm test        run tests" \
       "    pnpm lint        check code style"
     ;;
   "Swift Library")
     gum style --foreground 240 \
-      "  Next steps:" \
+      "  Raise your newborn:" \
       "    swift build       build the package" \
       "    swift test        run tests"
     ;;
   "Swift iOS"|"Swift macOS"|"Swift macOS Launcher")
     gum style --foreground 240 \
-      "  Next steps:" \
+      "  Raise your newborn:" \
       "    open *.xcodeproj  open in Xcode" \
       "    tuist test        run tests"
     ;;
