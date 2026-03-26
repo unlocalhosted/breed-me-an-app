@@ -71,9 +71,11 @@ breed-me
 ```sh
 breed-me            # start a new project
 breed-me list       # see everything you've spawned
+breed-me profiles   # manage saved identity profiles
 breed-me --local    # skip GitHub entirely — local git repo only
 breed-me --dry-run  # preview what would happen, touch nothing
 breed-me --update   # update to the latest version
+breed-me --version  # show version
 breed-me --help     # usage
 ```
 
@@ -83,19 +85,25 @@ breed-me --help     # usage
 
 | Stack | What gets created |
 |---|---|
-| **Node.js** | `package.json`, `index.js`, `.gitignore` |
+| **Node.js** | ESM · `node --test` · `node --watch` · `src/index.js` + `src/index.test.js` |
 | **TypeScript** | pnpm + bun runtime · `vitest` · `oxlint` · `src/index.ts` + `src/index.test.ts` |
-| **Python** | `main.py`, `requirements.txt`, `.gitignore` |
+| **Python** | `main.py` · `pytest` · `requirements.txt` · `test_main.py` |
 | **Go** | `main.go`, `go.mod` (module path set to your GitHub handle), `.gitignore` |
 | **Rust** | Full `cargo init` if cargo is installed, `.gitignore` |
 | **React (Vite)** | pnpm + Vite + React 19 · `vitest` + `@testing-library/react` · `oxlint` · `react-grab` |
 | **Next.js** | pnpm + `create-next-app` (App Router + Tailwind) · `vitest` · `oxlint` · `react-grab` |
+| **Swift Library** | SPM package · `Package.swift` (macOS 14 + iOS 17) · Swift Testing · SwiftLint |
+| **Swift iOS** | Tuist · SwiftUI · Swift Testing · SwiftLint · iOS 17+ |
+| **Swift macOS** | Tuist · SwiftUI · Swift Testing · SwiftLint · macOS 14+ |
+| **Swift macOS Launcher** | Tuist · NSPanel + NSStatusItem · KeyboardShortcuts · `LSUIElement` · Swift Testing · SwiftLint |
 | **Bare** | `README.md` + `.gitignore` — nothing else |
 | **From template →** | Clone any GitHub template repo as the starting point |
 
 Every stack includes a `README.md` and an optional `LICENSE` file prefilled with your name and year.
 
 > **TypeScript, React, and Next.js** require `pnpm` (`npm install -g pnpm`) and a modern `bun` install for the TypeScript backend runtime.
+
+> **Swift stacks** require Xcode (App Store). App stacks (iOS, macOS, Launcher) additionally require Tuist: `brew install tuist`. SwiftLint is optional but recommended: `brew install swiftlint`.
 
 ---
 

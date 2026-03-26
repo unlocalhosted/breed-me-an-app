@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+VERSION="0.5.0"
+
 # ─── config ───────────────────────────────────────────────────────────────────
 CONFIG_DIR="$HOME/.config/breed-me"
 PROFILES_FILE="$CONFIG_DIR/profiles"
@@ -13,7 +15,17 @@ mkdir -p "$CONFIG_DIR"
 
 # ─── cleanup ──────────────────────────────────────────────────────────────────
 TMPFILES=()
-cleanup() { rm -f "${TMPFILES[@]}" 2>/dev/null || true; }
+EXECUTION_STARTED=false
+PROJECT_PATH=""
+
+cleanup() {
+  rm -f "${TMPFILES[@]}" 2>/dev/null || true
+  # Remove partially-scaffolded project on interrupt
+  if [[ "$EXECUTION_STARTED" == true && -n "$PROJECT_PATH" && -d "$PROJECT_PATH" ]]; then
+    rm -rf "$PROJECT_PATH" 2>/dev/null || true
+    printf "\n  Cleaned up partial directory: %s\n" "$PROJECT_PATH" >&2
+  fi
+}
 trap cleanup EXIT INT TERM
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
@@ -24,6 +36,7 @@ safe_timeout() {
   fi
 }
 
+# Exit codes: 0=success, 1=general error, 2=missing dependency, 3=user abort, 4=auth failure
 die() {
   echo ""
   gum style --foreground 196 "  ✗ $*"
@@ -31,11 +44,20 @@ die() {
   exit 1
 }
 
+warn() {
+  gum style --foreground 214 "  ⚠ $*"
+}
+
+note() {
+  gum style --foreground 240 "  $*"
+}
+
 # ─── wizard ───────────────────────────────────────────────────────────────────
 # PROGRESS_LINES accumulates "  key   value" entries shown above each prompt.
 # show_header clears the screen and redraws the phase header + all progress so
 # far — this is what prevents terminal jumping between prompts.
 PROGRESS_LINES=()
+PENDING_WARNINGS=()
 
 add_progress() {
   PROGRESS_LINES+=("  $(printf '%-14s' "$1")  $2")
@@ -52,17 +74,27 @@ show_header() {
     gum style --foreground 240 "${PROGRESS_LINES[@]}"
     echo ""
   fi
+  # Re-display any pending warnings that survived a clear
+  if [[ ${#PENDING_WARNINGS[@]} -gt 0 ]]; then
+    for w in "${PENDING_WARNINGS[@]}"; do
+      warn "$w"
+    done
+    PENDING_WARNINGS=()
+    echo ""
+  fi
 }
 
 # ─── --help ───────────────────────────────────────────────────────────────────
 show_help() {
   printf "Usage: breed-me [SUBCOMMAND] [OPTIONS]\n\n"
   printf "Subcommands:\n"
-  printf "  list        Show previously created projects\n\n"
+  printf "  list        Show previously created projects\n"
+  printf "  profiles    Manage saved identity profiles\n\n"
   printf "Options:\n"
   printf "  --local     Skip all GitHub steps (no gh required)\n"
   printf "  --dry-run   Preview inputs without creating anything\n"
   printf "  --update    Update to the latest version\n"
+  printf "  --version   Show version\n"
   printf "  -h, --help  Show this help\n"
 }
 
@@ -96,24 +128,40 @@ while [[ $# -gt 0 ]]; do
     --local)    FLAG_LOCAL=true ;;
     --dry-run)  FLAG_DRY_RUN=true ;;
     --update)   do_update ;;
+    --version)  printf "breed-me %s\n" "$VERSION"; exit 0 ;;
     -h|--help)  show_help; exit 0 ;;
     list)       SUBCOMMAND="list" ;;
+    profiles)   SUBCOMMAND="profiles" ;;
     *)          printf "error: unknown option: %s\n" "$1" >&2; exit 1 ;;
   esac
   shift
 done
 
 # ─── dep check ────────────────────────────────────────────────────────────────
+install_hint() {
+  if command -v brew &>/dev/null; then
+    printf "brew install %s" "$1"
+  elif command -v apt-get &>/dev/null; then
+    case "$1" in
+      gum) printf "see https://github.com/charmbracelet/gum#installation" ;;
+      gh)  printf "see https://github.com/cli/cli#installation" ;;
+      *)   printf "apt-get install %s" "$1" ;;
+    esac
+  else
+    printf "see https://github.com/charmbracelet/gum#installation"
+  fi
+}
+
 for cmd in git gum; do
   command -v "$cmd" &>/dev/null || {
-    printf "error: '%s' is required. brew install %s\n" "$cmd" "$cmd" >&2
-    exit 1
+    printf "error: '%s' is required. %s\n" "$cmd" "$(install_hint "$cmd")" >&2
+    exit 2
   }
 done
 if [[ "$FLAG_LOCAL" == false ]] && ! command -v gh &>/dev/null; then
-  printf "error: 'gh' is required for GitHub. brew install gh\n" >&2
+  printf "error: 'gh' is required for GitHub. %s\n" "$(install_hint gh)" >&2
   printf "       Or use --local to skip GitHub.\n" >&2
-  exit 1
+  exit 2
 fi
 
 # ─── list subcommand ──────────────────────────────────────────────────────────
@@ -134,35 +182,81 @@ if [[ "$SUBCOMMAND" == "list" ]]; then
   exit 0
 fi
 
+# ─── profiles subcommand ─────────────────────────────────────────────────────
+if [[ "$SUBCOMMAND" == "profiles" ]]; then
+  if [[ ! -f "$PROFILES_FILE" ]] || [[ ! -s "$PROFILES_FILE" ]]; then
+    gum style --foreground 240 "  No profiles saved yet. Create one during your first breed-me run."
+    exit 0
+  fi
+  echo ""
+  while IFS='|' read -r plabel pname pemail; do
+    gum style --foreground 212 "  $plabel"
+    gum style --foreground 240 \
+      "    name   $pname" \
+      "    email  $pemail"
+    echo ""
+  done < "$PROFILES_FILE"
+
+  ACTION=$(printf "Done\nDelete a profile\n" | gum choose --header "  Action" --height 4)
+  if [[ "$ACTION" == "Delete a profile" ]]; then
+    DEL_LABEL=$(cut -d'|' -f1 "$PROFILES_FILE" | gum choose --header "  Delete which profile?" --height 8)
+    if [[ -n "$DEL_LABEL" ]]; then
+      awk -F'|' -v l="$DEL_LABEL" '$1 != l' "$PROFILES_FILE" > "${PROFILES_FILE}.tmp" 2>/dev/null || true
+      mv "${PROFILES_FILE}.tmp" "$PROFILES_FILE" 2>/dev/null || true
+      gum style --foreground 82 "  ✓ Deleted profile: $DEL_LABEL"
+    fi
+  fi
+  exit 0
+fi
+
 # ─── prefetch github data ─────────────────────────────────────────────────────
 GITHUB_USER=""
 GITHUB_ORGS=""
 
 if [[ "$FLAG_LOCAL" == false ]]; then
-  PREFETCH_TMP=$(mktemp); TMPFILES+=("$PREFETCH_TMP")
+  PREFETCH_USER=$(mktemp); TMPFILES+=("$PREFETCH_USER")
+  PREFETCH_ORGS=$(mktemp); TMPFILES+=("$PREFETCH_ORGS")
 
   gum spin --spinner dot --title "  Connecting to GitHub..." -- \
-    bash -c "
+    bash -c '
       safe_timeout() {
-        if command -v timeout &>/dev/null; then timeout \"\$@\"
-        elif command -v gtimeout &>/dev/null; then gtimeout \"\$@\"
-        else shift; \"\$@\"; fi
+        if command -v timeout &>/dev/null; then timeout "$@"
+        elif command -v gtimeout &>/dev/null; then gtimeout "$@"
+        else shift; "$@"; fi
       }
-      safe_timeout 10 gh api user --jq .login > '$PREFETCH_TMP' 2>/dev/null || true
-      safe_timeout 10 gh api user/orgs --jq '.[].login' >> '$PREFETCH_TMP' 2>/dev/null || true
-    " || true
+      safe_timeout 10 gh api user --jq .login > "$1" 2>/dev/null &
+      safe_timeout 10 gh api user/orgs --jq ".[].login" > "$2" 2>/dev/null &
+      wait
+    ' _ "$PREFETCH_USER" "$PREFETCH_ORGS" || true
 
-  if [[ -s "$PREFETCH_TMP" ]]; then
-    GITHUB_USER=$(head -1 "$PREFETCH_TMP")
-    GITHUB_ORGS=$(tail -n +2 "$PREFETCH_TMP")
+  if [[ -s "$PREFETCH_USER" ]]; then
+    GITHUB_USER=$(<"$PREFETCH_USER")
+    GITHUB_ORGS=$(<"$PREFETCH_ORGS")
   fi
 
   if [[ -z "$GITHUB_USER" ]]; then
     gum style --foreground 196 \
-      "  GitHub auth failed. Run: gh auth login" \
+      "  ✗ GitHub auth failed. Run: gh auth login" \
       "  Or use --local to skip GitHub."
-    exit 1
+    exit 4
   fi
+fi
+
+# ─── first-run welcome ────────────────────────────────────────────────────────
+if [[ ! -f "$HISTORY_FILE" ]] && [[ ! -f "$PROFILES_FILE" ]]; then
+  clear
+  gum style \
+    --foreground 212 --border-foreground 212 --border rounded \
+    --padding "0 2" --margin "0 2" \
+    "◆ Welcome to breed-me" \
+    "" \
+    "  This wizard walks you through creating a new project in 4 steps:" \
+    "  project name & stack → GitHub → identity → details" \
+    "" \
+    "  Your choices are saved as profiles for next time." \
+    "  Run breed-me --dry-run to preview without creating anything."
+  echo ""
+  gum confirm "  Ready?" || { echo ""; gum style --foreground 240 "  Aborted."; echo ""; exit 3; }
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -191,7 +285,7 @@ if [[ ${#PROJECT_NAME} -gt 100 ]]; then
 fi
 
 [[ "$PROJECT_NAME" != "$PROJECT_NAME_RAW" ]] && \
-  gum style --foreground 214 "  Normalized: $PROJECT_NAME_RAW → $PROJECT_NAME"
+  note "Normalized: $PROJECT_NAME_RAW → $PROJECT_NAME"
 [[ -z "$PROJECT_NAME" ]] && \
   die "\"$PROJECT_NAME_RAW\" has no valid characters — try: my-app"
 
@@ -200,10 +294,10 @@ add_progress "project" "$PROJECT_NAME"
 # ─── stack ────────────────────────────────────────────────────────────────────
 show_header "Project  ·  1 of 4"
 
-STACK_OPTIONS=("Node.js" "TypeScript" "Python" "Go" "Rust" "React (Vite)" "Next.js" "Bare")
+STACK_OPTIONS=("Node.js" "TypeScript" "Python" "Go" "Rust" "React (Vite)" "Next.js" "Swift Library" "Swift iOS" "Swift macOS" "Swift macOS Launcher" "Bare")
 [[ "$FLAG_LOCAL" == false ]] && STACK_OPTIONS+=("From template →")
 
-STACK=$(printf "%s\n" "${STACK_OPTIONS[@]}" | gum choose --header "  Stack" --height 11)
+STACK=$(printf "%s\n" "${STACK_OPTIONS[@]}" | gum choose --header "  Stack" --height 15)
 add_progress "stack" "$STACK"
 
 # ─── template repo ────────────────────────────────────────────────────────────
@@ -215,10 +309,54 @@ if [[ "$STACK" == "From template →" ]]; then
   add_progress "template" "$TEMPLATE_REPO"
 fi
 
-# ─── pnpm check for package-manager-aware stacks ─────────────────────────────
+# ─── js/ts dep checks ─────────────────────────────────────────────────────────
+PNPM_VERSION=""
 if [[ "$STACK" == "TypeScript" || "$STACK" == "React (Vite)" || "$STACK" == "Next.js" ]]; then
   command -v pnpm &>/dev/null || \
     die "pnpm is required for $STACK — install from pnpm.io or: npm install -g pnpm"
+  PNPM_VERSION=$(pnpm --version 2>/dev/null || echo "latest")
+fi
+if [[ "$STACK" == "React (Vite)" || "$STACK" == "Next.js" ]]; then
+  command -v node &>/dev/null || \
+    die "Node.js is required for $STACK — install from nodejs.org"
+fi
+if [[ "$STACK" == "TypeScript" ]]; then
+  command -v bun &>/dev/null || \
+    die "bun is required for $STACK — install from bun.sh or: curl -fsSL https://bun.sh/install | bash"
+fi
+
+# ─── rust dep check ───────────────────────────────────────────────────────────
+if [[ "$STACK" == "Rust" ]]; then
+  command -v cargo &>/dev/null || \
+    die "cargo is required for Rust — install from rustup.rs or: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+fi
+
+# ─── swift dep checks ─────────────────────────────────────────────────────────
+SWIFT_TYPE_NAME=""
+if [[ "$STACK" == "Swift Library" || "$STACK" == "Swift iOS" || \
+      "$STACK" == "Swift macOS" || "$STACK" == "Swift macOS Launcher" ]]; then
+  xcrun swift --version &>/dev/null 2>&1 || \
+    die "Xcode is required for Swift — install from the App Store or developer.apple.com"
+  SWIFT_TYPE_NAME=$(printf "%s" "$PROJECT_NAME" | \
+    awk 'BEGIN{FS="-";OFS=""}{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) substr($i,2)}1')
+fi
+
+# ─── tuist dep check for app stacks ──────────────────────────────────────────
+if [[ "$STACK" == "Swift iOS" || "$STACK" == "Swift macOS" || \
+      "$STACK" == "Swift macOS Launcher" ]]; then
+  command -v tuist &>/dev/null || \
+    die "Tuist is required for $STACK — install: brew install tuist"
+fi
+
+# ─── bundle id for swift stacks ──────────────────────────────────────────────
+BUNDLE_ID=""
+if [[ "$STACK" == "Swift iOS" || "$STACK" == "Swift macOS" || \
+      "$STACK" == "Swift macOS Launcher" ]]; then
+  if [[ -n "$GITHUB_USER" ]]; then
+    BUNDLE_ID="io.github.$GITHUB_USER.$PROJECT_NAME"
+  else
+    BUNDLE_ID="com.example.$PROJECT_NAME"
+  fi
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -349,7 +487,7 @@ add_progress "branch" "$BRANCH"
 
 # ─── .env.example ─────────────────────────────────────────────────────────────
 ADD_ENV=false
-if [[ "$STACK" != "From template →" ]]; then
+if [[ "$STACK" != "From template →" && ! "$STACK" =~ ^Swift ]]; then
   show_header "Details  ·  4 of 4"
   gum style --foreground 240 "  Creates .env.example as a template for environment variables."
   echo ""
@@ -367,6 +505,14 @@ if [[ "$STACK" != "From template →" ]] && [[ "$STACK" != "Bare" ]]; then
   add_progress "ci" "$(if $ADD_CI; then printf yes; else printf no; fi)"
 fi
 
+# ─── swiftlint advisory ───────────────────────────────────────────────────────
+if [[ "$STACK" =~ ^Swift ]] && ! command -v swiftlint &>/dev/null; then
+  show_header "Details  ·  4 of 4"
+  note "swiftlint not found — .swiftlint.yml will be written but linting"
+  note "won't run in CI until you install it: brew install swiftlint"
+  echo ""
+fi
+
 # ─── parent directory ─────────────────────────────────────────────────────────
 DEFAULT_DIR="$HOME"
 if [[ -f "$LAST_DIR_FILE" ]]; then
@@ -380,7 +526,7 @@ PARENT_DIR=$(gum file --directory --file=false \
   "$DEFAULT_DIR") || die "no directory selected"
 [[ -z "$PARENT_DIR" ]] && die "no directory selected"
 PARENT_DIR="${PARENT_DIR%/}"
-printf "%s\n" "$PARENT_DIR" > "$LAST_DIR_FILE"
+printf "%s\n" "$PARENT_DIR" > "${LAST_DIR_FILE}.tmp" && mv "${LAST_DIR_FILE}.tmp" "$LAST_DIR_FILE"
 
 PROJECT_PATH="$PARENT_DIR/$PROJECT_NAME"
 add_progress "path" "$PROJECT_PATH"
@@ -391,6 +537,12 @@ add_progress "path" "$PROJECT_PATH"
 
 show_header "Ready"
 
+# Enhanced summary with borders for the confirmation screen
+gum style --border rounded --border-foreground 212 \
+  --padding "0 2" --margin "0 2" \
+  "${PROGRESS_LINES[@]}"
+echo ""
+
 if [[ "$FLAG_DRY_RUN" == true ]]; then
   gum style --foreground 214 --border rounded --border-foreground 214 \
     --padding "0 2" --margin "0 2" \
@@ -399,7 +551,7 @@ if [[ "$FLAG_DRY_RUN" == true ]]; then
   exit 0
 fi
 
-gum confirm "  Breed it?" || { echo ""; gum style --foreground 240 "  Aborted."; echo ""; exit 0; }
+gum confirm "  Breed it?" || { echo ""; gum style --foreground 240 "  Aborted."; echo ""; exit 3; }
 echo ""
 
 # ─── guard ────────────────────────────────────────────────────────────────────
@@ -419,7 +571,105 @@ write_readme() {
 # $PROJECT_NAME
 
 ${DESCRIPTION:-}
+
+## Development
 EOF
+  case "$STACK" in
+    "Node.js")
+      cat >> README.md <<'EOF'
+
+```sh
+npm run dev      # start with --watch
+npm test         # run tests
+```
+EOF
+      ;;
+    "TypeScript")
+      cat >> README.md <<'EOF'
+
+```sh
+pnpm dev         # start with bun --watch
+pnpm test        # run tests (vitest)
+pnpm lint        # lint (oxlint)
+pnpm build       # type-check
+```
+EOF
+      ;;
+    "Python")
+      cat >> README.md <<'EOF'
+
+```sh
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python main.py   # run the app
+pytest           # run tests
+```
+EOF
+      ;;
+    "Go")
+      cat >> README.md <<'EOF'
+
+```sh
+go run .          # run the app
+go test ./...     # run tests
+go build ./...    # build
+```
+EOF
+      ;;
+    "Rust")
+      cat >> README.md <<'EOF'
+
+```sh
+cargo run         # run the app
+cargo test        # run tests
+cargo build       # build
+```
+EOF
+      ;;
+    "React (Vite)")
+      cat >> README.md <<'EOF'
+
+```sh
+pnpm dev         # start dev server
+pnpm test        # run tests (vitest + testing-library)
+pnpm lint        # lint (oxlint)
+pnpm build       # production build
+```
+EOF
+      ;;
+    "Next.js")
+      cat >> README.md <<'EOF'
+
+```sh
+pnpm dev         # start dev server
+pnpm test        # run tests (vitest + testing-library)
+pnpm lint        # lint (oxlint)
+pnpm build       # production build
+```
+EOF
+      ;;
+    "Swift Library")
+      cat >> README.md <<'EOF'
+
+```sh
+swift build       # build the package
+swift test        # run tests
+swiftlint         # lint
+```
+EOF
+      ;;
+    "Swift iOS"|"Swift macOS"|"Swift macOS Launcher")
+      cat >> README.md <<'EOF'
+
+```sh
+tuist generate    # generate Xcode project
+open *.xcodeproj  # open in Xcode
+tuist test        # run tests
+swiftlint         # lint
+```
+EOF
+      ;;
+  esac
 }
 
 write_env_example() {
@@ -513,9 +763,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 20 }
+        with: { node-version: 22 }
       - run: npm install
-      - run: npm test --if-present
+      - run: npm test
 EOF
       ;;
     "TypeScript")
@@ -621,7 +871,145 @@ jobs:
       - run: pnpm build
 EOF
       ;;
+    "Swift Library")
+      cat > .github/workflows/ci.yml <<EOF
+name: CI
+on:
+  push:
+    branches: [$BRANCH]
+  pull_request:
+jobs:
+  ci:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: swift build
+      - name: Test
+        run: swift test
+      - name: Lint
+        run: |
+          brew install swiftlint 2>/dev/null || true
+          swiftlint --strict
+EOF
+      ;;
+    "Swift iOS"|"Swift macOS"|"Swift macOS Launcher")
+      cat > .github/workflows/ci.yml <<EOF
+name: CI
+on:
+  push:
+    branches: [$BRANCH]
+  pull_request:
+jobs:
+  ci:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tuist
+        run: brew install tuist
+      - name: Install dependencies
+        run: tuist install
+      - name: Generate project
+        run: tuist generate --no-open
+      - name: Build and test
+        run: tuist test
+      - name: Lint
+        run: |
+          brew install swiftlint 2>/dev/null || true
+          swiftlint --strict
+EOF
+      ;;
   esac
+}
+
+write_swiftlint() {
+  cat > .swiftlint.yml <<'EOF'
+opt_in_rules:
+  - array_init
+  - closure_end_indentation
+  - closure_spacing
+  - collection_alignment
+  - contains_over_filter_count
+  - contains_over_filter_is_empty
+  - contains_over_first_not_nil
+  - contains_over_range_nil_comparison
+  - discouraged_object_literal
+  - empty_collection_literal
+  - empty_count
+  - empty_string
+  - enum_case_associated_values_count
+  - explicit_init
+  - extension_access_modifier
+  - fallthrough
+  - fatal_error_message
+  - file_header
+  - first_where
+  - flatmap_over_map_reduce
+  - identical_operands
+  - joined_default_parameter
+  - last_where
+  - literal_expression_end_indentation
+  - modifier_order
+  - multiline_arguments
+  - multiline_function_chains
+  - multiline_parameters
+  - operator_usage_whitespace
+  - overridden_super_call
+  - prefer_self_type_over_type_of_self
+  - redundant_nil_coalescing
+  - redundant_type_annotation
+  - single_test_class
+  - sorted_first_last
+  - static_operator
+  - toggle_bool
+  - unneeded_parentheses_in_closure_argument
+  - unused_import
+  - vertical_parameter_alignment_on_call
+  - yoda_condition
+
+disabled_rules:
+  - todo
+  - nesting
+  - trailing_comma
+
+analyzer_rules:
+  - unused_import
+
+force_cast: warning
+force_try: warning
+
+line_length:
+  warning: 120
+  error: 160
+  ignores_function_declarations: true
+  ignores_comments: true
+  ignores_urls: true
+
+identifier_name:
+  excluded:
+    - id
+    - x
+    - y
+    - z
+    - i
+
+type_body_length:
+  warning: 300
+  error: 400
+
+file_length:
+  warning: 500
+  error: 800
+  ignore_comment_only_lines: true
+
+function_body_length:
+  warning: 60
+  error: 100
+
+cyclomatic_complexity:
+  warning: 15
+  error: 25
+EOF
 }
 
 # ─── template flow ────────────────────────────────────────────────────────────
@@ -632,8 +1020,11 @@ if [[ "$STACK" == "From template →" ]]; then
   GH_ARGS=("$OWNER/$PROJECT_NAME" "--template" "$TEMPLATE_REPO" "--$VISIBILITY" "--clone")
   [[ -n "$DESCRIPTION" ]] && GH_ARGS+=("--description" "$DESCRIPTION")
 
-  gum spin --spinner dot --title "  Creating from template..." -- \
-    gh repo create "${GH_ARGS[@]}"
+  if ! gum spin --spinner dot --title "  Creating from template..." -- \
+      gh repo create "${GH_ARGS[@]}"; then
+    die "Template creation failed. Check the template repo name and your permissions." \
+        "  To retry: gh repo create $OWNER/$PROJECT_NAME --template $TEMPLATE_REPO --$VISIBILITY --clone"
+  fi
 
   cd "$PROJECT_PATH"
   git config user.name  "$GIT_NAME"
@@ -647,6 +1038,7 @@ if [[ "$STACK" == "From template →" ]]; then
 
 # ─── standard flow ────────────────────────────────────────────────────────────
 else
+  EXECUTION_STARTED=true
   mkdir -p "$PROJECT_PATH" || die "cannot create '$PROJECT_PATH' — check permissions"
   cd "$PROJECT_PATH"
   git init -q -b "$BRANCH"
@@ -654,6 +1046,10 @@ else
   git config user.email "$GIT_EMAIL"
 
   GO_MODULE="${OWNER:+github.com/$OWNER/}$PROJECT_NAME"
+  GO_VERSION="1.23"
+  if command -v go &>/dev/null; then
+    GO_VERSION=$(go env GOVERSION 2>/dev/null | sed 's/^go//' || echo "1.23")
+  fi
 
   case "$STACK" in
     "Node.js")
@@ -670,14 +1066,34 @@ EOF
   "name": "$PROJECT_NAME",
   "version": "0.1.0",
   "description": "$JSON_DESCRIPTION",
-  "main": "index.js",
+  "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test"
   },
   "license": "$LICENSE_SPDX"
 }
 EOF
-      touch index.js
+      mkdir -p src
+      cat > src/index.js <<'EOF'
+export function main() {
+  console.log('Hello, world!')
+}
+
+main()
+EOF
+      cat > src/index.test.js <<'EOF'
+import { describe, it } from 'node:test'
+import assert from 'node:assert/strict'
+import { main } from './index.js'
+
+describe('main', () => {
+  it('runs without error', () => {
+    assert.doesNotThrow(() => main())
+  })
+})
+EOF
       write_readme; write_env_example; write_license; write_ci
       ;;
 
@@ -696,7 +1112,7 @@ EOF
   "version": "0.1.0",
   "description": "$JSON_DESCRIPTION",
   "type": "module",
-  "packageManager": "pnpm@latest",
+  "packageManager": "pnpm@$PNPM_VERSION",
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "start": "bun src/index.ts",
@@ -777,7 +1193,7 @@ EOF
       write_readme; write_env_example; write_license; write_ci
       gum spin --spinner dot --title "  Installing dependencies..." -- \
         pnpm install --silent 2>/dev/null || \
-        gum style --foreground 214 "  pnpm install failed — run manually: pnpm install"
+        warn "pnpm install failed — run manually: pnpm install"
       ;;
 
     "Python")
@@ -794,7 +1210,7 @@ dist/
 .pytest_cache/
 .DS_Store
 EOF
-      touch requirements.txt
+      printf "pytest\n" > requirements.txt
       cat > main.py <<'EOF'
 def main() -> None:
     print("Hello, world!")
@@ -802,6 +1218,15 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+EOF
+      cat > test_main.py <<'EOF'
+from main import main
+
+
+def test_main_runs(capsys):
+    main()
+    captured = capsys.readouterr()
+    assert "Hello, world!" in captured.out
 EOF
       write_readme; write_env_example; write_license; write_ci
       ;;
@@ -817,7 +1242,7 @@ EOF
       cat > go.mod <<EOF
 module $GO_MODULE
 
-go 1.22
+go $GO_VERSION
 EOF
       cat > main.go <<'EOF'
 package main
@@ -838,11 +1263,7 @@ EOF
 .DS_Store
 EOF
       write_readme; write_env_example; write_license; write_ci
-      if command -v cargo &>/dev/null; then
-        cargo init . --name "$PROJECT_NAME" -q 2>/dev/null || true
-      else
-        gum style --foreground 214 "  Note: 'cargo' not found. Install Rust then run: cargo init ."
-      fi
+      cargo init . --name "$PROJECT_NAME" -q 2>/dev/null || true
       ;;
 
     "React (Vite)")
@@ -861,7 +1282,7 @@ EOF
   "private": true,
   "description": "$JSON_DESCRIPTION",
   "type": "module",
-  "packageManager": "pnpm@latest",
+  "packageManager": "pnpm@$PNPM_VERSION",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -1021,10 +1442,10 @@ EOF
       write_readme; write_env_example; write_license; write_ci
       gum spin --spinner dot --title "  Installing dependencies..." -- \
         pnpm install --silent 2>/dev/null || \
-        gum style --foreground 214 "  pnpm install failed — run manually: pnpm install"
+        warn "pnpm install failed — run manually: pnpm install"
       gum spin --spinner dot --title "  Initializing react-grab..." -- \
         pnpm dlx grab@latest init 2>/dev/null || \
-        gum style --foreground 214 "  react-grab: run manually: pnpm dlx grab@latest init"
+        warn "react-grab: run manually: pnpm dlx grab@latest init"
       ;;
 
     "Next.js")
@@ -1107,10 +1528,10 @@ fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n')
 JSEOF
       gum spin --spinner dot --title "  Installing dependencies..." -- \
         pnpm install --silent 2>/dev/null || \
-        gum style --foreground 214 "  pnpm install failed — run manually: pnpm install"
+        warn "pnpm install failed — run manually: pnpm install"
       gum spin --spinner dot --title "  Initializing react-grab..." -- \
         pnpm dlx grab@latest init 2>/dev/null || \
-        gum style --foreground 214 "  react-grab: run manually: pnpm dlx grab@latest init"
+        warn "react-grab: run manually: pnpm dlx grab@latest init"
       ;;
 
     "Bare")
@@ -1121,10 +1542,480 @@ JSEOF
 EOF
       write_readme; write_env_example; write_license
       ;;
+
+    "Swift Library")
+      cat > .gitignore <<'EOF'
+.build/
+.swiftpm/
+DerivedData/
+*.xcodeproj
+.DS_Store
+EOF
+      mkdir -p "Sources/$PROJECT_NAME" "Tests/${PROJECT_NAME}Tests"
+      cat > Package.swift <<EOF
+// swift-tools-version: 5.10
+import PackageDescription
+
+let package = Package(
+    name: "$PROJECT_NAME",
+    platforms: [.macOS(.v14), .iOS(.v17)],
+    products: [
+        .library(name: "$PROJECT_NAME", targets: ["$PROJECT_NAME"]),
+    ],
+    targets: [
+        .target(
+            name: "$PROJECT_NAME",
+            path: "Sources/$PROJECT_NAME"
+        ),
+        .testTarget(
+            name: "${PROJECT_NAME}Tests",
+            dependencies: ["$PROJECT_NAME"],
+            path: "Tests/${PROJECT_NAME}Tests"
+        ),
+    ]
+)
+EOF
+      # Overwrite source file with a real implementation
+      mkdir -p "Sources/$PROJECT_NAME"
+      cat > "Sources/$PROJECT_NAME/$PROJECT_NAME.swift" <<EOF
+public struct $SWIFT_TYPE_NAME {
+    public init() {}
+
+    public func greet(_ name: String) -> String {
+        "Hello, \\(name)!"
+    }
+}
+EOF
+      # Overwrite test file with Swift Testing (not XCTest)
+      mkdir -p "Tests/${PROJECT_NAME}Tests"
+      cat > "Tests/${PROJECT_NAME}Tests/${PROJECT_NAME}Tests.swift" <<EOF
+import Testing
+@testable import $PROJECT_NAME
+
+@Suite("$SWIFT_TYPE_NAME")
+struct ${SWIFT_TYPE_NAME}Tests {
+    @Test("greet returns a personalised greeting")
+    func greetReturnsGreeting() {
+        let sut = $SWIFT_TYPE_NAME()
+        #expect(sut.greet("World") == "Hello, World!")
+    }
+}
+EOF
+      write_swiftlint; write_readme; write_license; write_ci
+      ;;
+
+    "Swift iOS")
+      cat > .gitignore <<'EOF'
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+.tuist-build/
+.build/
+Tuist/.build/
+.DS_Store
+EOF
+      mkdir -p Sources/App Sources/Features Tests/AppTests Tuist Resources
+      cat > Tuist/Config.swift <<'EOF'
+import ProjectDescription
+
+let config = Config()
+EOF
+      cat > Project.swift <<EOF
+import ProjectDescription
+
+let project = Project(
+    name: "$PROJECT_NAME",
+    targets: [
+        .target(
+            name: "$PROJECT_NAME",
+            destinations: .iOS,
+            product: .app,
+            bundleId: "$BUNDLE_ID",
+            deploymentTargets: .iOS("17.0"),
+            infoPlist: .extendingDefault(with: [
+                "UILaunchScreen": ["UIColorName": ""],
+                "CFBundleDisplayName": "\$(PRODUCT_NAME)",
+            ]),
+            sources: ["Sources/**"],
+            resources: ["Resources/**"]
+        ),
+        .target(
+            name: "${PROJECT_NAME}Tests",
+            destinations: .iOS,
+            product: .unitTests,
+            bundleId: "$BUNDLE_ID.tests",
+            deploymentTargets: .iOS("17.0"),
+            sources: ["Tests/**"],
+            dependencies: [.target(name: "$PROJECT_NAME")]
+        ),
+    ]
+)
+EOF
+      cat > Sources/App/App.swift <<EOF
+import SwiftUI
+
+@main
+struct ${SWIFT_TYPE_NAME}App: App {
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+    }
+}
+EOF
+      cat > Sources/Features/ContentView.swift <<'EOF'
+import SwiftUI
+
+struct ContentView: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "iphone")
+                .font(.system(size: 48))
+                .foregroundStyle(.tint)
+            Text("Ready to build")
+                .font(.title2)
+                .fontWeight(.medium)
+        }
+        .padding()
+    }
+}
+
+#Preview {
+    ContentView()
+}
+EOF
+      cat > Tests/AppTests/ContentViewTests.swift <<EOF
+import Testing
+import SwiftUI
+@testable import $PROJECT_NAME
+
+@Suite("ContentView")
+@MainActor
+struct ContentViewTests {
+    @Test("view initialises without error")
+    func viewInitialises() {
+        let view = ContentView()
+        #expect(type(of: view) == ContentView.self)
+    }
+}
+EOF
+      write_swiftlint; write_readme; write_license; write_ci
+      gum spin --spinner dot --title "  Installing Tuist dependencies..." -- \
+        tuist install 2>/dev/null || \
+        warn "tuist install failed — run manually: tuist install"
+      gum spin --spinner dot --title "  Generating Xcode project..." -- \
+        tuist generate --no-open 2>/dev/null || \
+        warn "tuist generate failed — run manually: tuist generate"
+      ;;
+
+    "Swift macOS")
+      cat > .gitignore <<'EOF'
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+.tuist-build/
+.build/
+Tuist/.build/
+.DS_Store
+EOF
+      mkdir -p Sources/App Sources/Features Tests/AppTests Tuist Resources
+      cat > Tuist/Config.swift <<'EOF'
+import ProjectDescription
+
+let config = Config()
+EOF
+      cat > Project.swift <<EOF
+import ProjectDescription
+
+let project = Project(
+    name: "$PROJECT_NAME",
+    targets: [
+        .target(
+            name: "$PROJECT_NAME",
+            destinations: [.mac],
+            product: .app,
+            bundleId: "$BUNDLE_ID",
+            deploymentTargets: .macOS("14.0"),
+            infoPlist: .extendingDefault(with: [
+                "CFBundleDisplayName": "\$(PRODUCT_NAME)",
+            ]),
+            sources: ["Sources/**"],
+            resources: ["Resources/**"]
+        ),
+        .target(
+            name: "${PROJECT_NAME}Tests",
+            destinations: [.mac],
+            product: .unitTests,
+            bundleId: "$BUNDLE_ID.tests",
+            deploymentTargets: .macOS("14.0"),
+            sources: ["Tests/**"],
+            dependencies: [.target(name: "$PROJECT_NAME")]
+        ),
+    ]
+)
+EOF
+      cat > Sources/App/App.swift <<EOF
+import SwiftUI
+
+@main
+struct ${SWIFT_TYPE_NAME}App: App {
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+        .commands {
+            CommandGroup(replacing: .newItem) {}
+        }
+    }
+}
+EOF
+      cat > Sources/Features/ContentView.swift <<'EOF'
+import SwiftUI
+
+struct ContentView: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "desktopcomputer")
+                .font(.system(size: 48))
+                .foregroundStyle(.tint)
+            Text("Ready to build")
+                .font(.title2)
+                .fontWeight(.medium)
+        }
+        .frame(minWidth: 400, minHeight: 300)
+        .padding()
+    }
+}
+
+#Preview {
+    ContentView()
+}
+EOF
+      cat > Tests/AppTests/ContentViewTests.swift <<EOF
+import Testing
+import SwiftUI
+@testable import $PROJECT_NAME
+
+@Suite("ContentView")
+@MainActor
+struct ContentViewTests {
+    @Test("view initialises without error")
+    func viewInitialises() {
+        let view = ContentView()
+        #expect(type(of: view) == ContentView.self)
+    }
+}
+EOF
+      write_swiftlint; write_readme; write_license; write_ci
+      gum spin --spinner dot --title "  Installing Tuist dependencies..." -- \
+        tuist install 2>/dev/null || \
+        warn "tuist install failed — run manually: tuist install"
+      gum spin --spinner dot --title "  Generating Xcode project..." -- \
+        tuist generate --no-open 2>/dev/null || \
+        warn "tuist generate failed — run manually: tuist generate"
+      ;;
+
+    "Swift macOS Launcher")
+      cat > .gitignore <<'EOF'
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+.tuist-build/
+.build/
+Tuist/.build/
+.DS_Store
+EOF
+      mkdir -p Sources/App Sources/Launcher Tests/LauncherTests Tuist Resources
+      cat > Tuist/Config.swift <<'EOF'
+import ProjectDescription
+
+let config = Config()
+EOF
+      cat > Project.swift <<EOF
+import ProjectDescription
+
+let project = Project(
+    name: "$PROJECT_NAME",
+    packages: [
+        .remote(
+            url: "https://github.com/sindresorhus/KeyboardShortcuts",
+            requirement: .upToNextMajor(from: "2.0.0")
+        ),
+    ],
+    targets: [
+        .target(
+            name: "$PROJECT_NAME",
+            destinations: [.mac],
+            product: .app,
+            bundleId: "$BUNDLE_ID",
+            deploymentTargets: .macOS("14.0"),
+            infoPlist: .extendingDefault(with: [
+                "LSUIElement": true,
+                "CFBundleDisplayName": "\$(PRODUCT_NAME)",
+            ]),
+            sources: ["Sources/**"],
+            resources: ["Resources/**"],
+            dependencies: [.package(product: "KeyboardShortcuts")]
+        ),
+        .target(
+            name: "${PROJECT_NAME}Tests",
+            destinations: [.mac],
+            product: .unitTests,
+            bundleId: "$BUNDLE_ID.tests",
+            deploymentTargets: .macOS("14.0"),
+            sources: ["Tests/**"],
+            dependencies: [.target(name: "$PROJECT_NAME")]
+        ),
+    ]
+)
+EOF
+      # AppKit entry point — no SwiftUI @main (panel needs AppDelegate control)
+      cat > Sources/App/main.swift <<'EOF'
+import AppKit
+
+let app = NSApplication.shared
+let delegate = AppDelegate()
+app.delegate = delegate
+app.run()
+EOF
+      cat > Sources/Launcher/AppDelegate.swift <<EOF
+import AppKit
+import SwiftUI
+import KeyboardShortcuts
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var statusItem: NSStatusItem!
+    private var panel: LauncherPanel!
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        if let button = statusItem.button {
+            button.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Search")
+            button.action = #selector(togglePanel)
+            button.target = self
+        }
+
+        panel = LauncherPanel()
+
+        KeyboardShortcuts.onKeyUp(for: .toggleLauncher) { [weak self] in
+            self?.togglePanel()
+        }
+    }
+
+    @objc func togglePanel() {
+        if panel.isVisible {
+            panel.orderOut(nil)
+        } else {
+            panel.center()
+            panel.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+}
+EOF
+      cat > Sources/Launcher/LauncherPanel.swift <<'EOF'
+import AppKit
+import SwiftUI
+
+final class LauncherPanel: NSPanel {
+    init() {
+        super.init(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 80),
+            styleMask: [.nonactivatingPanel, .fullSizeContentView, .titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        isReleasedWhenClosed = false
+        level = .floating
+        isMovableByWindowBackground = true
+        titlebarAppearsTransparent = true
+        titleVisibility = .hidden
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+
+        let view = NSHostingView(rootView: LauncherView(onDismiss: { [weak self] in
+            self?.orderOut(nil)
+        }))
+        contentView = view
+    }
+
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+
+    override func resignKey() {
+        super.resignKey()
+        orderOut(nil)
+    }
+}
+EOF
+      cat > Sources/Launcher/LauncherView.swift <<'EOF'
+import SwiftUI
+
+struct LauncherView: View {
+    let onDismiss: () -> Void
+    @State private var query = ""
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+                .font(.title3)
+            TextField("Search…", text: $query)
+                .textFieldStyle(.plain)
+                .font(.title3)
+                .onSubmit { onDismiss() }
+        }
+        .padding(.horizontal, 20)
+        .frame(height: 80)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .onExitCommand { onDismiss() }
+    }
+}
+EOF
+      cat > Sources/Launcher/ShortcutManager.swift <<'EOF'
+import KeyboardShortcuts
+
+extension KeyboardShortcuts.Name {
+    static let toggleLauncher = Self(
+        "toggleLauncher",
+        default: .init(.space, modifiers: .option)
+    )
+}
+EOF
+      cat > Tests/LauncherTests/LauncherPanelTests.swift <<EOF
+import Testing
+import AppKit
+@testable import $PROJECT_NAME
+
+@Suite("LauncherPanel")
+@MainActor
+struct LauncherPanelTests {
+    @Test("panel has nonactivating style mask")
+    func panelStyleMask() {
+        let panel = LauncherPanel()
+        #expect(panel.styleMask.contains(.nonactivatingPanel))
+    }
+
+    @Test("panel level is floating")
+    func panelLevel() {
+        let panel = LauncherPanel()
+        #expect(panel.level == .floating)
+    }
+}
+EOF
+      write_swiftlint; write_readme; write_license; write_ci
+      gum spin --spinner dot --title "  Installing Tuist dependencies..." -- \
+        tuist install 2>/dev/null || \
+        warn "tuist install failed — run manually: tuist install"
+      gum spin --spinner dot --title "  Generating Xcode project..." -- \
+        tuist generate --no-open 2>/dev/null || \
+        warn "tuist generate failed — run manually: tuist generate"
+      ;;
   esac
 
   git add .
-  git commit --allow-empty -m "init: bootstrap $PROJECT_NAME"
+  git commit -m "init: breed $PROJECT_NAME"
+  EXECUTION_STARTED=false  # commit succeeded — don't clean up on exit
 
   if [[ "$PUSH_TO_GITHUB" == true ]]; then
     GH_ARGS=("$OWNER/$PROJECT_NAME" "--$VISIBILITY" "--source=." "--remote=origin" "--push")
@@ -1132,9 +2023,9 @@ EOF
 
     if ! gum spin --spinner dot --title "  Creating GitHub repo..." -- \
         gh repo create "${GH_ARGS[@]}"; then
-      gum style --foreground 196 \
-        "  GitHub repo creation failed. Your local repo is intact." \
-        "  To retry: gh repo create $OWNER/$PROJECT_NAME --source=$PROJECT_PATH --push"
+      PENDING_WARNINGS+=("GitHub repo creation failed. Your local repo is intact.")
+      PENDING_WARNINGS+=("If repo exists: cd \"$PROJECT_PATH\" && git push -u origin $BRANCH")
+      PENDING_WARNINGS+=("If not: gh repo create $OWNER/$PROJECT_NAME --source=$PROJECT_PATH --push")
       PUSH_TO_GITHUB=false
     fi
   fi
@@ -1161,7 +2052,7 @@ esac
 # ─── done ─────────────────────────────────────────────────────────────────────
 REPO_URL=""
 if [[ "$PUSH_TO_GITHUB" == true ]]; then
-  REPO_URL=$(gh repo view "$OWNER/$PROJECT_NAME" --json url --jq .url 2>/dev/null || true)
+  REPO_URL="https://github.com/$OWNER/$PROJECT_NAME"
 fi
 
 clear
@@ -1172,20 +2063,103 @@ gum style \
   "✓ $PROJECT_NAME is ready${REPO_URL:+  →  $REPO_URL}"
 echo ""
 
+# Show any warnings that were buffered during execution
+if [[ ${#PENDING_WARNINGS[@]} -gt 0 ]]; then
+  for w in "${PENDING_WARNINGS[@]}"; do
+    warn "$w"
+  done
+  PENDING_WARNINGS=()
+  echo ""
+fi
+
 CD_CMD="cd \"$PROJECT_PATH\""
 if command -v pbcopy &>/dev/null; then
   printf "%s" "$CD_CMD" | pbcopy
-  gum style --foreground 255 "  \$ $CD_CMD"
+  gum style --foreground 212 "  \$ $CD_CMD"
+  gum style --foreground 240 "  (copied to clipboard)"
+elif command -v xclip &>/dev/null; then
+  printf "%s" "$CD_CMD" | xclip -selection clipboard
+  gum style --foreground 212 "  \$ $CD_CMD"
+  gum style --foreground 240 "  (copied to clipboard)"
+elif command -v wl-copy &>/dev/null; then
+  printf "%s" "$CD_CMD" | wl-copy
+  gum style --foreground 212 "  \$ $CD_CMD"
   gum style --foreground 240 "  (copied to clipboard)"
 else
-  gum style --foreground 255 "  \$ $CD_CMD"
+  gum style --foreground 212 "  \$ $CD_CMD"
 fi
+
+# ─── next steps ──────────────────────────────────────────────────────────────
+echo ""
+case "$STACK" in
+  "Node.js")
+    gum style --foreground 240 \
+      "  Next steps:" \
+      "    npm run dev      start with --watch" \
+      "    npm test         run tests"
+    ;;
+  "TypeScript")
+    gum style --foreground 240 \
+      "  Next steps:" \
+      "    pnpm dev         start with bun --watch" \
+      "    pnpm test        run tests" \
+      "    pnpm lint        check code style"
+    ;;
+  "Python")
+    gum style --foreground 240 \
+      "  Next steps:" \
+      "    python -m venv .venv && source .venv/bin/activate" \
+      "    pip install -r requirements.txt" \
+      "    python main.py   run the app" \
+      "    pytest            run tests"
+    ;;
+  "Go")
+    gum style --foreground 240 \
+      "  Next steps:" \
+      "    go run .          run the app" \
+      "    go test ./...     run tests"
+    ;;
+  "Rust")
+    gum style --foreground 240 \
+      "  Next steps:" \
+      "    cargo run         run the app" \
+      "    cargo test        run tests"
+    ;;
+  "React (Vite)")
+    gum style --foreground 240 \
+      "  Next steps:" \
+      "    pnpm dev         start dev server" \
+      "    pnpm test        run tests" \
+      "    pnpm lint        check code style"
+    ;;
+  "Next.js")
+    gum style --foreground 240 \
+      "  Next steps:" \
+      "    pnpm dev         start dev server" \
+      "    pnpm test        run tests" \
+      "    pnpm lint        check code style"
+    ;;
+  "Swift Library")
+    gum style --foreground 240 \
+      "  Next steps:" \
+      "    swift build       build the package" \
+      "    swift test        run tests"
+    ;;
+  "Swift iOS"|"Swift macOS"|"Swift macOS Launcher")
+    gum style --foreground 240 \
+      "  Next steps:" \
+      "    open *.xcodeproj  open in Xcode" \
+      "    tuist test        run tests"
+    ;;
+esac
 echo ""
 
 # ─── save history ─────────────────────────────────────────────────────────────
-printf "%s|%s|%s|%s\n" \
-  "$PROJECT_NAME" \
-  "$PROJECT_PATH" \
-  "${REPO_URL:-}" \
-  "$(date '+%Y-%m-%d %H:%M')" \
-  >> "$HISTORY_FILE"
+{
+  [[ -f "$HISTORY_FILE" ]] && cat "$HISTORY_FILE"
+  printf "%s|%s|%s|%s\n" \
+    "$PROJECT_NAME" \
+    "$PROJECT_PATH" \
+    "${REPO_URL:-}" \
+    "$(date '+%Y-%m-%d %H:%M')"
+} > "${HISTORY_FILE}.tmp" && mv "${HISTORY_FILE}.tmp" "$HISTORY_FILE"
